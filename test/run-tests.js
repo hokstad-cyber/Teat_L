@@ -91,6 +91,27 @@ const jsonDraws = parseDraws(json, lotto);
 assert(jsonDraws.length === 2, "parseDraws handles JSON");
 assert(jsonDraws[1].date.getFullYear() === 2023, "JSON drawDate parsed");
 
+/* unofficial Norsk Tipping API shapes */
+{
+  // single-object response with anti-hijacking prefix and compact date
+  const ntLotto = 'while(true);/* 0; {"drawID":1234,"drawDate":"20240316","mainNumbers":[1,5,12,19,23,28,31],"additionalNumbers":[2]}';
+  const parsed = parseDraws(ntLotto, lotto);
+  assert(parsed.length === 1, "NT API: parses single-object lotto response");
+  assert(parsed[0].mains.join(",") === "1,5,12,19,23,28,31", "NT API: main numbers");
+  assert(parsed[0].date && parsed[0].date.getFullYear() === 2024 && parsed[0].date.getMonth() === 2 && parsed[0].date.getDate() === 16, "NT API: compact yyyymmdd date");
+
+  const ntEuro = '{"drawID":777,"drawDate":20240614,"mainNumbers":[7,19,28,33,45],"starNumbers":[3,9]}';
+  const parsedEuro = parseDraws(ntEuro, euro);
+  assert(parsedEuro.length === 1 && parsedEuro[0].stars.join(",") === "3,9", "NT API: eurojackpot stars");
+
+  // Lottoland fallback shape
+  const lottoland = '{"last":{"date":{"day":14,"month":6,"year":2024},"numbers":[7,19,28,33,45],"euroNumbers":[3,9]},"next":{}}';
+  const parsedLl = parseDraws(lottoland, euro);
+  assert(parsedLl.length === 1, "Lottoland: parses last draw");
+  assert(parsedLl[0].date && parsedLl[0].date.getMonth() === 5, "Lottoland: date object parsed");
+  assert(parsedLl[0].stars.join(",") === "3,9", "Lottoland: euroNumbers as stars");
+}
+
 assert(dedupeDraws(draws.concat(draws)).length === 3, "dedupeDraws removes duplicates");
 
 const recent = filterDrawsByYears(draws, 3, new Date(2026, 5, 12));

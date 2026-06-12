@@ -24,12 +24,19 @@ loaded history.
 ### Historical draws
 Load previously drawn winning numbers and stop the generator from repeating history:
 
-- **Fetch from URL** — preset links to the relevant results pages are provided per
-  lottery. The fetch tries the provider directly first and automatically falls back
-  to public read-through mirrors when the provider blocks browser requests (CORS).
-  Successful fetches are cached for 12 hours per URL so repeated clicks don't hammer
-  (or get blocked by) the provider. If every route fails, the app explains the
-  copy/paste and file-import fallbacks.
+- **Fetch results automatically** — uses the unofficial Norsk Tipping JSON API
+  (`norsk-tipping.no/api-{game}/getResultInfo.json`, the endpoint behind the
+  open-source wrappers [Nilzone-/Norsk-Tipping](https://github.com/Nilzone-/Norsk-Tipping)
+  and [zrrrzzt/norsk-tipping-results](https://github.com/zrrrzzt/norsk-tipping-results)):
+  it fetches the latest draw, reads its `drawID`, and walks backwards through past
+  draws (up to 160, sized by your lookback window) with limited concurrency. If that
+  API is unavailable it falls back to other unofficial APIs (e.g. Lottoland for
+  Eurojackpot) and finally to parsing the result pages.
+- **Fetch from URL (manual)** — every fetch tries the provider directly first and
+  automatically falls back to public read-through mirrors when the provider blocks
+  browser requests (CORS). Successful fetches are cached for 12 hours per URL so
+  repeated clicks don't hammer (or get blocked by) the provider. If every route
+  fails, the app explains the copy/paste and file-import fallbacks.
 - **Paste draws** — one draw per line, e.g. `16.03.2024 1 5 12 19 23 28 31`
   (Eurojackpot: `14.06.2024 7 19 28 33 45 + 3 9`). Norwegian (`dd.mm.yyyy`) and ISO
   dates are both understood.

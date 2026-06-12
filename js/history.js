@@ -13,6 +13,19 @@ const DATE_PATTERNS = [
 ];
 
 function parseDateFromText(text) {
+  // Compact yyyymmdd (e.g. "20240316"), as returned by the unofficial
+  // Norsk Tipping API. Only when the whole token is the date, so eight
+  // arbitrary digits in free text aren't misread.
+  const compact = String(text).match(/^\s*(\d{4})(\d{2})(\d{2})\s*$/);
+  if (compact) {
+    const y = parseInt(compact[1], 10);
+    const m = parseInt(compact[2], 10);
+    const d = parseInt(compact[3], 10);
+    if (m >= 1 && m <= 12 && d >= 1 && d <= 31) {
+      const dt = new Date(y, m - 1, d);
+      if (!isNaN(dt.getTime())) return { date: dt, matched: compact[0] };
+    }
+  }
   for (const p of DATE_PATTERNS) {
     const m = text.match(p.re);
     if (!m) continue;
@@ -84,13 +97,12 @@ function parseDrawsJson(text, cfg) {
     return [];
   }
   const draws = [];
-  const items = Array.isArray(data)
-    ? data
-    : data && Array.isArray(data.draws)
-      ? data.draws
-      : data && Array.isArray(data.results)
-        ? data.results
-        : [];
+  let items = [];
+  if (Array.isArray(data)) items = data;
+  else if (data && Array.isArray(data.draws)) items = data.draws;
+  else if (data && Array.isArray(data.results)) items = data.results;
+  else if (data && data.last && typeof data.last === "object") items = [data.last]; // Lottoland shape
+  else if (data && typeof data === "object") items = [data]; // single draw (Norsk Tipping API)
   for (const item of items) {
     if (!item || typeof item !== "object") continue;
     const mains =
@@ -104,6 +116,15 @@ function parseDrawsJson(text, cfg) {
     let date = null;
     for (const key of ["date", "drawDate", "draw_date", "drawingDate"]) {
       if (item[key]) {
+        // Lottoland encodes the date as { day, month, year }.
+        if (typeof item[key] === "object" && item[key].year) {
+          const o = item[key];
+          const dt = new Date(parseInt(o.year, 10), parseInt(o.month, 10) - 1, parseInt(o.day, 10));
+          if (!isNaN(dt.getTime())) {
+            date = dt;
+            break;
+          }
+        }
         const found = parseDateFromText(String(item[key]));
         if (found) {
           date = found.date;
@@ -134,11 +155,24 @@ function pickNumberArray(obj, keys, count, max) {
   return null;
 }
 
+/** Slice out the JSON body when the response has a non-JSON prefix, e.g.
+    the `while(true);/* 0;` anti-hijacking guard on the Norsk Tipping API. */
+function extractJsonCandidate(content) {
+  const trimmed = content.trim();
+  if (trimmed.startsWith("{") || trimmed.startsWith("[")) return trimmed;
+  const starts = [trimmed.indexOf("{"), trimmed.indexOf("[")].filter((i) => i >= 0);
+  if (!starts.length) return null;
+  const first = Math.min(...starts);
+  const close = trimmed[first] === "{" ? "}" : "]";
+  const last = trimmed.lastIndexOf(close);
+  return last > first ? trimmed.slice(first, last + 1) : null;
+}
+
 /** Auto-detect JSON vs text and parse. */
 function parseDraws(content, cfg) {
-  const trimmed = content.trim();
-  if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
-    const fromJson = parseDrawsJson(trimmed, cfg);
+  const candidate = extractJsonCandidate(content);
+  if (candidate) {
+    const fromJson = parseDrawsJson(candidate, cfg);
     if (fromJson.length) return fromJson;
   }
   return parseDrawsText(content, cfg);

@@ -305,6 +305,30 @@
     return fetch(url, { mode: "cors", signal: ctrl.signal }).finally(() => clearTimeout(timer));
   }
 
+  /** Fetch a URL trying the direct route first, then the backup mirrors.
+      `preferredIdx` reorders the attempts so a route that already worked
+      for this provider is tried first. Returns { text, routeIdx, via }. */
+  async function fetchViaRoutes(url, preferredIdx) {
+    const order = FETCH_ROUTES.map((_, i) => i);
+    if (preferredIdx > 0) order.splice(order.indexOf(preferredIdx), 1) && order.unshift(preferredIdx);
+    const failures = [];
+    for (const i of order) {
+      const route = FETCH_ROUTES[i];
+      try {
+        const res = await fetchWithTimeout(route.make(url));
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const text = await res.text();
+        if (!text.trim()) throw new Error("empty response");
+        return { text, routeIdx: i, via: route.name };
+      } catch (e) {
+        failures.push(`${route.name}: ${e.name === "AbortError" ? "timed out" : e.message}`);
+      }
+    }
+    const err = new Error(failures.join(" · "));
+    err.allRoutesFailed = true;
+    throw err;
+  }
+
   async function fetchHistory() {
     const url = $("#history-url").value.trim();
     if (!url) {
@@ -320,31 +344,143 @@
         addDraws(cached.draws, `the cache (fetched ${cached.ageMinutes} min ago — cached to avoid hitting the provider repeatedly)`);
         return;
       }
+      setHistoryStatus("Fetching…", false);
       const cfg = LOTTERIES[state.lotteryId];
-      const failures = [];
-      for (const route of FETCH_ROUTES) {
-        setHistoryStatus(`Trying ${route.name}…`, false);
-        try {
-          const res = await fetchWithTimeout(route.make(url));
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          const text = await res.text();
-          const draws = parseDraws(stripHtml(text), cfg);
-          if (!draws.length) throw new Error("no parsable draws in response");
-          putCachedDraws(url, draws);
-          addDraws(draws, `${route.name}`);
-          return;
-        } catch (e) {
-          failures.push(`${route.name}: ${e.name === "AbortError" ? "timed out" : e.message}`);
-        }
+      const { text, via } = await fetchViaRoutes(url, -1);
+      const draws = parseDraws(stripHtml(text), cfg);
+      if (!draws.length) {
+        setHistoryStatus(`Fetched via ${via}, but found no parsable ${cfg.name} draws in the response.`, false);
+        return;
       }
+      putCachedDraws(url, draws);
+      addDraws(draws, via);
+    } catch (e) {
       setHistoryStatus(
-        `Fetching failed on all routes (${failures.join(" · ")}). ` +
+        `Fetching failed on all routes (${e.message}). ` +
           "Open the results page in a new tab, copy the draw history, and paste it in the box below — or import a downloaded CSV/JSON file.",
         false
       );
     } finally {
       btn.disabled = false;
       btn.textContent = "Fetch";
+    }
+  }
+
+  /* ---------- automatic API fetch (unofficial Norsk Tipping endpoint) ----------
+     Strategy from the open-source wrappers github.com/Nilzone-/Norsk-Tipping and
+     github.com/zrrrzzt/norsk-tipping-results: getResultInfo.json with no
+     parameter returns the latest draw including its drawID; ?drawID=N returns
+     draw N, so we walk backwards from the latest. */
+
+  const MAX_API_DRAWS = 160;
+  const API_CONCURRENCY = 5;
+
+  function extractDrawId(text) {
+    const m = text.match(/"drawI[dD]"\s*:\s*"?(\d+)/);
+    return m ? parseInt(m[1], 10) : null;
+  }
+
+  function apiDrawCount(cfg) {
+    const years = $("#hist-window").checked ? intVal("hist-window-years", 0) : 0;
+    if (years > 0) return Math.min(MAX_API_DRAWS, years * cfg.api.drawsPerYear);
+    return Math.min(MAX_API_DRAWS, 2 * cfg.api.drawsPerYear);
+  }
+
+  async function walkNorskTippingApi(cfg, onProgress) {
+    const base = cfg.api.latest;
+    const latest = await fetchViaRoutes(base, -1);
+    const latestId = extractDrawId(latest.text);
+    const latestDraws = parseDraws(latest.text, cfg);
+    if (!latestDraws.length || !latestId) {
+      throw new Error("the Norsk Tipping API response had no recognisable draw");
+    }
+    const want = apiDrawCount(cfg);
+    const ids = [];
+    for (let i = 1; i < want && latestId - i > 0; i++) ids.push(latestId - i);
+    const collected = latestDraws.slice();
+    let done = 0;
+    let consecutiveFailures = 0;
+    const workers = Array.from({ length: API_CONCURRENCY }, async () => {
+      while (ids.length && consecutiveFailures < 12) {
+        const id = ids.shift();
+        try {
+          const { text } = await fetchViaRoutes(`${base}?drawID=${id}`, latest.routeIdx);
+          const draws = parseDraws(text, cfg);
+          if (draws.length) {
+            collected.push(...draws);
+            consecutiveFailures = 0;
+          } else {
+            consecutiveFailures++;
+          }
+        } catch (e) {
+          consecutiveFailures++;
+        }
+        done++;
+        if (done % 5 === 0) onProgress(done + 1, want);
+      }
+    });
+    await Promise.all(workers);
+    return { draws: collected, via: latest.via, want };
+  }
+
+  async function autoFetchHistory() {
+    const cfg = LOTTERIES[state.lotteryId];
+    const btn = $("#history-auto");
+    btn.disabled = true;
+    const cacheUrl = "auto-api:" + cfg.id + ":" + apiDrawCount(cfg);
+    try {
+      const cached = getCachedDraws(cacheUrl);
+      if (cached) {
+        addDraws(cached.draws, `the cache (fetched ${cached.ageMinutes} min ago — cached to avoid hitting the provider repeatedly)`);
+        return;
+      }
+      // 1) Unofficial Norsk Tipping API, walking back through draw IDs.
+      try {
+        setHistoryStatus("Contacting the unofficial Norsk Tipping API…", false);
+        const result = await walkNorskTippingApi(cfg, (done, want) =>
+          setHistoryStatus(`Fetching past draws from the Norsk Tipping API… ${Math.min(done, want)}/${want}`, false)
+        );
+        putCachedDraws(cacheUrl, result.draws);
+        addDraws(result.draws, `the unofficial Norsk Tipping API (via ${result.via})`);
+        return;
+      } catch (e) {
+        /* fall through to backup APIs */
+      }
+      // 2) Other unofficial APIs for this lottery.
+      for (const fb of cfg.api.fallbacks) {
+        try {
+          setHistoryStatus(`Norsk Tipping API unavailable — trying ${fb.label}…`, false);
+          const { text, via } = await fetchViaRoutes(fb.url, -1);
+          const draws = parseDraws(text, cfg);
+          if (draws.length) {
+            addDraws(draws, `${fb.label} (via ${via})`);
+            return;
+          }
+        } catch (e) {
+          /* try next fallback */
+        }
+      }
+      // 3) Last resort: the result pages, parsed as text.
+      for (const src of cfg.sources) {
+        try {
+          setHistoryStatus(`Trying ${src.label}…`, false);
+          const { text, via } = await fetchViaRoutes(src.url, -1);
+          const draws = parseDraws(stripHtml(text), cfg);
+          if (draws.length) {
+            addDraws(draws, `${src.label} (via ${via})`);
+            return;
+          }
+        } catch (e) {
+          /* try next source */
+        }
+      }
+      setHistoryStatus(
+        "Automatic fetching failed: the unofficial Norsk Tipping API, the backup APIs and the result pages were all unreachable or unparsable. " +
+          "Copy the draws from a results page and paste them below, or import a CSV/JSON file.",
+        false
+      );
+    } finally {
+      btn.disabled = false;
     }
   }
 
@@ -544,6 +680,7 @@
     $("#btn-print").addEventListener("click", () => window.print());
 
     $("#history-fetch").addEventListener("click", fetchHistory);
+    $("#history-auto").addEventListener("click", autoFetchHistory);
     $("#history-parse").addEventListener("click", () => {
       const text = $("#history-paste").value;
       if (!text.trim()) {
