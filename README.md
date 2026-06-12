@@ -25,8 +25,11 @@ loaded history.
 Load previously drawn winning numbers and stop the generator from repeating history:
 
 - **Fetch from URL** — preset links to the relevant results pages are provided per
-  lottery. Note that most lottery sites block direct browser requests (CORS); when a
-  fetch fails the app explains the fallback.
+  lottery. The fetch tries the provider directly first and automatically falls back
+  to public read-through mirrors when the provider blocks browser requests (CORS).
+  Successful fetches are cached for 12 hours per URL so repeated clicks don't hammer
+  (or get blocked by) the provider. If every route fails, the app explains the
+  copy/paste and file-import fallbacks.
 - **Paste draws** — one draw per line, e.g. `16.03.2024 1 5 12 19 23 28 31`
   (Eurojackpot: `14.06.2024 7 19 28 33 45 + 3 9`). Norwegian (`dd.mm.yyyy`) and ISO
   dates are both understood.
@@ -51,7 +54,9 @@ A statistics panel shows per-number frequency and hot/cold numbers for the activ
 | Max numbers in sequence | Limits the longest run of consecutive numbers (e.g. allow at most 2) |
 | Odd / even balance | Requires between *min* and *max* odd numbers per row |
 | Sum within range | Keeps each row's sum inside a configurable band (defaults per lottery) |
-| Spread across number zones | At most *N* numbers per zone of ten (1–10, 11–20, …) |
+| Spread across number zones | Between *min* and *max* numbers per zone of ten (1–10, 11–20, …); a minimum above 0 forces every zone to be represented |
+| Limit odd/even streaks | Rejects rows containing more than *N* consecutive only-odd or only-even numbers (e.g. 3, 7, 11, 19) |
+| Pattern guard | Rejects rows where more than *N* (default 4) numbers form an equal-gap progression (5, 10, 15, 20, 25), share the same final digit (7, 17, 27, …), or are multiples of the same small number (3, 5 or 7) |
 | Avoid birthday bias | Requires at least one number above 31 (fewer co-winners if you win) |
 | Limit overlap between rows | No two of your 10 rows share more than *N* numbers |
 | Exclude specific numbers | Numbers that must never be picked |

@@ -81,10 +81,40 @@
             <span class="slider"></span>
             <span class="toggle-label">Spread across number zones</span>
           </label>
+          <div class="criterion-body two-col" data-for="crit-zone">
+            <label>Max per zone <input type="number" id="crit-zone-max" min="1" max="10" value="3" /></label>
+            <label>Min per zone <input type="number" id="crit-zone-min" min="0" max="10" value="0" /></label>
+          </div>
           <div class="criterion-body" data-for="crit-zone">
-            <label>Max numbers per zone of ten (1–10, 11–20, …)
-              <input type="number" id="crit-zone-max" min="1" max="10" value="3" />
+            <p class="mini-hint">Zones of ten: 1–10, 11–20, … A minimum above 0 forces every zone to be represented.</p>
+          </div>
+        </div>
+
+        <div class="criterion">
+          <label class="toggle">
+            <input type="checkbox" id="crit-parity" checked />
+            <span class="slider"></span>
+            <span class="toggle-label">Limit odd/even streaks</span>
+          </label>
+          <div class="criterion-body" data-for="crit-parity">
+            <label>Longest allowed run of only-odd or only-even numbers
+              <input type="number" id="crit-parity-value" min="1" max="10" value="3" />
             </label>
+            <p class="mini-hint">E.g. 3: a row like 3, 7, 11, 19, … (four odd numbers in a row) is rejected.</p>
+          </div>
+        </div>
+
+        <div class="criterion">
+          <label class="toggle">
+            <input type="checkbox" id="crit-pattern" checked />
+            <span class="slider"></span>
+            <span class="toggle-label">Pattern guard</span>
+          </label>
+          <div class="criterion-body" data-for="crit-pattern">
+            <label>Max occurrences of any single pattern
+              <input type="number" id="crit-pattern-max" min="2" max="10" value="4" />
+            </label>
+            <p class="mini-hint">Rejects rows where more than this many numbers form an equal-gap progression (5, 10, 15, 20, 25), share the same final digit (7, 17, 27, …), or are multiples of the same small number (3, 5 or 7).</p>
           </div>
         </div>
 
@@ -151,7 +181,7 @@
             </div>
           </label>
           <div id="history-presets" class="preset-links"></div>
-          <p class="mini-hint">Lottery sites often block direct fetching from a browser app (CORS). If fetching fails, open the results page yourself, copy the draws, and paste them below — or import a downloaded CSV/JSON file.</p>
+          <p class="mini-hint">Fetching tries the source directly first, then automatically falls back to public read-through mirrors when the provider blocks browser requests (CORS). Successful fetches are cached for 12 hours so the provider isn't hit repeatedly. If every route fails, copy the draws from the results page and paste them below — or import a downloaded CSV/JSON file.</p>
 
           <label>Paste draws (one per line, e.g. <code>16.03.2024 1 5 12 19 23 28 31</code>)
             <textarea id="history-paste" rows="3" placeholder="date  n1 n2 n3 …"></textarea>

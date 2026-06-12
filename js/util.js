@@ -65,6 +65,61 @@ function longestConsecutiveRun(sortedNums) {
   return sortedNums.length === 0 ? 0 : best;
 }
 
+/** Longest streak of consecutive same-parity numbers in a sorted row
+    (e.g. [3,7,11,19,22] -> 4: four odd numbers in a row). */
+function longestParityRun(sortedNums) {
+  let best = 0;
+  let run = 0;
+  let prev = -1;
+  for (const n of sortedNums) {
+    const p = n % 2;
+    run = p === prev ? run + 1 : 1;
+    prev = p;
+    if (run > best) best = run;
+  }
+  return best;
+}
+
+/** Longest arithmetic progression (equal gaps) hidden anywhere in a sorted
+    row, as a subsequence (e.g. [5,7,10,15,20] -> 4 via 5,10,15,20). */
+function longestArithmeticProgression(sortedNums) {
+  const n = sortedNums.length;
+  if (n < 2) return n;
+  let best = 2;
+  const dp = Array.from({ length: n }, () => new Map());
+  for (let j = 1; j < n; j++) {
+    for (let i = 0; i < j; i++) {
+      const gap = sortedNums[j] - sortedNums[i];
+      const len = (dp[i].get(gap) || 1) + 1;
+      dp[j].set(gap, len);
+      if (len > best) best = len;
+    }
+  }
+  return best;
+}
+
+/** Largest count of numbers sharing the same final digit (7,17,27 -> 3). */
+function maxSameLastDigit(nums) {
+  const buckets = new Array(10).fill(0);
+  let best = 0;
+  for (const n of nums) {
+    const b = ++buckets[n % 10];
+    if (b > best) best = b;
+  }
+  return best;
+}
+
+/** Largest count of numbers divisible by the same small divisor. */
+function maxSharedDivisor(nums, divisors) {
+  let best = 0;
+  for (const d of divisors || [3, 5, 7]) {
+    let c = 0;
+    for (const n of nums) if (n % d === 0) c++;
+    if (c > best) best = c;
+  }
+  return best;
+}
+
 function sumOf(nums) {
   return nums.reduce((a, b) => a + b, 0);
 }

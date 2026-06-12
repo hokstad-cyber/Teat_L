@@ -29,11 +29,13 @@ function assert(cond, name) {
 const {
   LOTTERIES, sampleDistinct, combinationKeys, longestConsecutiveRun, sumOf, countOdd,
   overlapCount, parseDrawsText, parseDraws, filterDrawsByYears, buildHistoryIndex,
-  dedupeDraws, generateTickets
+  dedupeDraws, generateTickets, longestParityRun, longestArithmeticProgression,
+  maxSameLastDigit, maxSharedDivisor, zoneOfNumber
 } = vm.runInContext(
   `({ LOTTERIES, sampleDistinct, combinationKeys, longestConsecutiveRun, sumOf, countOdd,
       overlapCount, parseDrawsText, parseDraws, filterDrawsByYears, buildHistoryIndex,
-      dedupeDraws, generateTickets })`,
+      dedupeDraws, generateTickets, longestParityRun, longestArithmeticProgression,
+      maxSameLastDigit, maxSharedDivisor, zoneOfNumber })`,
   context
 );
 
@@ -51,6 +53,15 @@ assert(longestConsecutiveRun([5, 9, 14]) === 1, "longestConsecutiveRun no run");
 assert(combinationKeys([1, 2, 3], 2).join(" ") === "1-2 1-3 2-3", "combinationKeys 3 choose 2");
 assert(combinationKeys([1, 2, 3, 4], 4).length === 1, "combinationKeys n choose n");
 assert(overlapCount([1, 2, 3], [3, 4, 5]) === 1, "overlapCount");
+
+assert(longestParityRun([3, 7, 11, 19, 22]) === 4, "parity run: four odds in a row");
+assert(longestParityRun([1, 2, 3, 4]) === 1, "parity run: alternating");
+assert(longestParityRun([2, 4, 6, 8, 10]) === 5, "parity run: all even");
+assert(longestArithmeticProgression([5, 7, 10, 15, 20]) === 4, "AP: 5,10,15,20 as subsequence");
+assert(longestArithmeticProgression([1, 2, 4, 8]) === 2, "AP: no 3-term progression");
+assert(longestArithmeticProgression([3, 6, 9, 12, 15]) === 5, "AP: full progression");
+assert(maxSameLastDigit([7, 17, 27, 3, 12]) === 3, "same last digit");
+assert(maxSharedDivisor([3, 6, 9, 14, 25]) === 3, "shared divisor: three multiples of 3");
 
 /* ---- history parsing ---- */
 const lotto = LOTTERIES.lotto;
@@ -92,7 +103,9 @@ function defaultCriteria(cfg) {
     maxRun: { enabled: true, value: 2 },
     oddEven: { enabled: true, minOdd: 2, maxOdd: cfg.mainPick - 2 },
     sumRange: { enabled: true, min: cfg.defaultSumMin, max: cfg.defaultSumMax },
-    zoneSpread: { enabled: true, maxPerZone: 3 },
+    zoneSpread: { enabled: true, maxPerZone: 3, minPerZone: 0 },
+    parityRun: { enabled: true, value: 3 },
+    patternGuard: { enabled: true, maxOccur: 4 },
     birthdayBias: { enabled: false },
     excludeNumbers: { enabled: false, numbers: [] },
     requireNumbers: { enabled: false, numbers: [] },
@@ -116,6 +129,10 @@ for (const cfg of [lotto, euro]) {
       const odd = countOdd(t.mains);
       assert(odd >= 2 && odd <= cfg.mainPick - 2, `${cfg.id}: odd/even respected`);
       assert(sumOf(t.mains) >= cfg.defaultSumMin && sumOf(t.mains) <= cfg.defaultSumMax, `${cfg.id}: sum respected`);
+      assert(longestParityRun(t.mains) <= 3, `${cfg.id}: parity streak respected`);
+      assert(longestArithmeticProgression(t.mains) <= 4, `${cfg.id}: pattern guard AP respected`);
+      assert(maxSameLastDigit(t.mains) <= 4, `${cfg.id}: pattern guard last digit respected`);
+      assert(maxSharedDivisor(t.mains) <= 4, `${cfg.id}: pattern guard divisor respected`);
     }
   }
   // batch overlap
@@ -155,6 +172,47 @@ for (const cfg of [lotto, euro]) {
   assert(tickets.length === 10, "require/exclude: generates 10");
   assert(tickets.every((t) => t.mains.includes(7)), "required number present in all rows");
   assert(tickets.every((t) => !t.mains.includes(13) && !t.mains.includes(22)), "excluded numbers absent");
+}
+
+/* zone minimum: every zone must be represented */
+{
+  const crit = defaultCriteria(lotto);
+  crit.zoneSpread = { enabled: true, maxPerZone: 3, minPerZone: 1 };
+  const { tickets } = generateTickets(10, lotto, crit, buildHistoryIndex([], 0));
+  assert(tickets.length === 10, "zone min: generates 10");
+  for (const t of tickets) {
+    if (t.relaxed) continue;
+    const counts = [0, 0, 0, 0];
+    for (const n of t.mains) counts[zoneOfNumber(lotto, n)]++;
+    assert(counts.every((c) => c >= 1), "zone min: every zone of ten represented");
+  }
+}
+
+/* strict parity streak limit */
+{
+  const crit = defaultCriteria(lotto);
+  crit.parityRun = { enabled: true, value: 2 };
+  const { tickets } = generateTickets(10, lotto, crit, buildHistoryIndex([], 0));
+  assert(
+    tickets.filter((t) => !t.relaxed).every((t) => longestParityRun(t.mains) <= 2),
+    "parity: streak limit of 2 enforced"
+  );
+}
+
+/* infeasible zone minimum is reported */
+{
+  const crit = defaultCriteria(lotto);
+  crit.zoneSpread = { enabled: true, maxPerZone: 3, minPerZone: 3 }; // 3 × 4 zones > 7
+  const r = generateTickets(10, lotto, crit, buildHistoryIndex([], 0));
+  assert(r.tickets.length === 0 && r.warnings.length > 0, "infeasible zone min rejected with warning");
+}
+
+/* zone min larger than the last (short) zone is reported */
+{
+  const crit = defaultCriteria(lotto);
+  crit.zoneSpread = { enabled: true, maxPerZone: 7, minPerZone: 5 }; // zone 31–34 has only 4 numbers (also 5×4 > 7)
+  const r = generateTickets(10, lotto, crit, buildHistoryIndex([], 0));
+  assert(r.tickets.length === 0 && r.warnings.some((w) => /31–34/.test(w)), "short-zone minimum rejected with warning");
 }
 
 /* infeasible criteria are reported, not looped forever */

@@ -65,7 +65,9 @@
     "crit-maxrun", "crit-maxrun-value",
     "crit-oddeven", "crit-oddeven-min", "crit-oddeven-max",
     "crit-sum", "crit-sum-min", "crit-sum-max",
-    "crit-zone", "crit-zone-max",
+    "crit-zone", "crit-zone-max", "crit-zone-min",
+    "crit-parity", "crit-parity-value",
+    "crit-pattern", "crit-pattern-max",
     "crit-birthday",
     "crit-overlap", "crit-overlap-max",
     "crit-exclude", "crit-exclude-list",
@@ -122,7 +124,13 @@
         min: intVal("crit-sum-min", cfg.defaultSumMin),
         max: intVal("crit-sum-max", cfg.defaultSumMax)
       },
-      zoneSpread: { enabled: $("#crit-zone").checked, maxPerZone: intVal("crit-zone-max", 3) },
+      zoneSpread: {
+        enabled: $("#crit-zone").checked,
+        maxPerZone: intVal("crit-zone-max", 3),
+        minPerZone: intVal("crit-zone-min", 0)
+      },
+      parityRun: { enabled: $("#crit-parity").checked, value: intVal("crit-parity-value", 3) },
+      patternGuard: { enabled: $("#crit-pattern").checked, maxOccur: intVal("crit-pattern-max", 4) },
       birthdayBias: { enabled: $("#crit-birthday").checked },
       excludeNumbers: {
         enabled: $("#crit-exclude").checked,
@@ -229,6 +237,74 @@
     setHistoryStatus(`${prefix ? prefix + " " : ""}${all.length} ${LOTTERIES[state.lotteryId].name} draws loaded${rangeText}${windowText}.`, true);
   }
 
+  /* Backup fetch: try the provider directly, then public read-through
+     mirrors that add CORS headers. Successful fetches are cached for 12 h
+     (per URL and lottery) so repeated clicks don't hammer — and don't get
+     us blocked by — the provider. */
+
+  const FETCH_CACHE_KEY = "lykketall.fetchcache.v1";
+  const FETCH_CACHE_TTL_MS = 12 * 60 * 60 * 1000;
+  const FETCH_TIMEOUT_MS = 12000;
+
+  const FETCH_ROUTES = [
+    { name: "the source directly", make: (u) => u },
+    { name: "backup mirror allorigins.win", make: (u) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}` },
+    { name: "backup mirror corsproxy.io", make: (u) => `https://corsproxy.io/?url=${encodeURIComponent(u)}` },
+    { name: "backup mirror codetabs.com", make: (u) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(u)}` }
+  ];
+
+  function readFetchCache() {
+    try {
+      return JSON.parse(localStorage.getItem(FETCH_CACHE_KEY)) || {};
+    } catch (e) {
+      return {};
+    }
+  }
+
+  function cacheKeyFor(url) {
+    return state.lotteryId + "::" + url;
+  }
+
+  function getCachedDraws(url) {
+    const entry = readFetchCache()[cacheKeyFor(url)];
+    if (!entry || Date.now() - entry.time > FETCH_CACHE_TTL_MS) return null;
+    return {
+      ageMinutes: Math.round((Date.now() - entry.time) / 60000),
+      draws: entry.draws.map((d) => ({
+        date: d.date ? new Date(d.date) : null,
+        mains: d.mains,
+        stars: d.stars || []
+      }))
+    };
+  }
+
+  function putCachedDraws(url, draws) {
+    try {
+      const cache = readFetchCache();
+      // Keep the cache small: drop expired entries before adding.
+      for (const key of Object.keys(cache)) {
+        if (Date.now() - cache[key].time > FETCH_CACHE_TTL_MS) delete cache[key];
+      }
+      cache[cacheKeyFor(url)] = {
+        time: Date.now(),
+        draws: draws.map((d) => ({
+          date: d.date ? d.date.toISOString().slice(0, 10) : null,
+          mains: d.mains,
+          stars: d.stars
+        }))
+      };
+      localStorage.setItem(FETCH_CACHE_KEY, JSON.stringify(cache));
+    } catch (e) {
+      /* quota exceeded — caching is best-effort */
+    }
+  }
+
+  function fetchWithTimeout(url) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
+    return fetch(url, { mode: "cors", signal: ctrl.signal }).finally(() => clearTimeout(timer));
+  }
+
   async function fetchHistory() {
     const url = $("#history-url").value.trim();
     if (!url) {
@@ -239,13 +315,30 @@
     btn.disabled = true;
     btn.textContent = "…";
     try {
-      const res = await fetch(url, { mode: "cors" });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const text = await res.text();
-      addDraws(parseDraws(stripHtml(text), LOTTERIES[state.lotteryId]), "the fetched page");
-    } catch (e) {
+      const cached = getCachedDraws(url);
+      if (cached) {
+        addDraws(cached.draws, `the cache (fetched ${cached.ageMinutes} min ago — cached to avoid hitting the provider repeatedly)`);
+        return;
+      }
+      const cfg = LOTTERIES[state.lotteryId];
+      const failures = [];
+      for (const route of FETCH_ROUTES) {
+        setHistoryStatus(`Trying ${route.name}…`, false);
+        try {
+          const res = await fetchWithTimeout(route.make(url));
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const text = await res.text();
+          const draws = parseDraws(stripHtml(text), cfg);
+          if (!draws.length) throw new Error("no parsable draws in response");
+          putCachedDraws(url, draws);
+          addDraws(draws, `${route.name}`);
+          return;
+        } catch (e) {
+          failures.push(`${route.name}: ${e.name === "AbortError" ? "timed out" : e.message}`);
+        }
+      }
       setHistoryStatus(
-        `Fetching failed (${e.message}). Most lottery sites block direct browser requests (CORS). ` +
+        `Fetching failed on all routes (${failures.join(" · ")}). ` +
           "Open the results page in a new tab, copy the draw history, and paste it in the box below — or import a downloaded CSV/JSON file.",
         false
       );

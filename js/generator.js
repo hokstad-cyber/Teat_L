@@ -6,7 +6,10 @@
  *   maxRun:        { enabled, value }   // longest allowed consecutive run
  *   oddEven:       { enabled, minOdd, maxOdd }
  *   sumRange:      { enabled, min, max }
- *   zoneSpread:    { enabled, maxPerZone }
+ *   zoneSpread:    { enabled, maxPerZone, minPerZone }
+ *   parityRun:     { enabled, value }   // longest allowed odd-or-even streak
+ *   patternGuard:  { enabled, maxOccur } // equal-gap progressions, same last
+ *                                        // digit, multiples of same divisor
  *   birthdayBias:  { enabled }          // require at least one number > 31
  *   excludeNumbers:{ enabled, numbers: number[] }
  *   requireNumbers:{ enabled, numbers: number[] }
@@ -41,9 +44,25 @@ function validateCriteriaFeasibility(cfg, criteria) {
   }
   if (criteria.zoneSpread.enabled) {
     const zones = lotteryZoneCount(cfg);
+    const min = criteria.zoneSpread.minPerZone || 0;
     if (zones * criteria.zoneSpread.maxPerZone < cfg.mainPick) {
       problems.push(`Zone spread: max ${criteria.zoneSpread.maxPerZone} per zone × ${zones} zones cannot hold ${cfg.mainPick} numbers.`);
     }
+    if (min > criteria.zoneSpread.maxPerZone) {
+      problems.push("Zone spread: minimum per zone is greater than maximum per zone.");
+    }
+    if (min * zones > cfg.mainPick) {
+      problems.push(`Zone spread: min ${min} per zone × ${zones} zones needs ${min * zones} numbers, but a row only has ${cfg.mainPick}.`);
+    }
+    for (let z = 0; z < zones; z++) {
+      const zoneSize = Math.min(cfg.zoneSize, cfg.mainMax - z * cfg.zoneSize);
+      if (min > zoneSize) {
+        problems.push(`Zone spread: zone ${z * cfg.zoneSize + 1}–${z * cfg.zoneSize + zoneSize} only has ${zoneSize} numbers, fewer than the minimum of ${min}.`);
+      }
+    }
+  }
+  if (criteria.patternGuard.enabled && criteria.patternGuard.maxOccur < 2) {
+    problems.push("Pattern guard: the threshold must be at least 2 (any two numbers form an equal-gap pair).");
   }
   if (criteria.birthdayBias.enabled && cfg.mainMax <= 31) {
     problems.push("Birthday-bias criterion needs numbers above 31, which this lottery does not have.");
@@ -72,6 +91,17 @@ function rowPassesCriteria(mains, cfg, criteria, historyIndex, previousRows, rel
       counts[z]++;
       if (counts[z] > criteria.zoneSpread.maxPerZone) return false;
     }
+    const min = criteria.zoneSpread.minPerZone || 0;
+    if (min > 0 && counts.some((c) => c < min)) return false;
+  }
+
+  if (criteria.parityRun.enabled && !relaxed && longestParityRun(mains) > criteria.parityRun.value) return false;
+
+  if (criteria.patternGuard.enabled && !relaxed) {
+    const limit = criteria.patternGuard.maxOccur;
+    if (longestArithmeticProgression(mains) > limit) return false;
+    if (maxSameLastDigit(mains) > limit) return false;
+    if (maxSharedDivisor(mains) > limit) return false;
   }
 
   if (criteria.birthdayBias.enabled && !relaxed) {
@@ -153,7 +183,7 @@ function generateTickets(count, cfg, criteria, historyIndex) {
       break;
     }
     if (relaxed) {
-      warnings.push(`Row ${t + 1}: style criteria (sum/odd-even/sequence/zones) were relaxed to satisfy the exclusion rules.`);
+      warnings.push(`Row ${t + 1}: style criteria (sum/odd-even/sequences/zones/patterns) were relaxed to satisfy the exclusion rules.`);
     }
     tickets.push(ticket);
     previousRows.push(ticket.mains);
