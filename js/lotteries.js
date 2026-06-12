@@ -16,22 +16,7 @@ const LOTTERIES = {
     // Typical sum band (~middle 80% of random 7-of-34 rows)
     defaultSumMin: 90,
     defaultSumMax: 155,
-    zoneSize: 10,
-    /* Unofficial JSON API (the endpoint used by the open-source wrappers
-       github.com/Nilzone-/Norsk-Tipping and github.com/zrrrzzt/norsk-tipping-results).
-       No drawID parameter -> latest draw; ?drawID=N -> a specific draw. */
-    api: {
-      latest: "https://www.norsk-tipping.no/api-lotto/getResultInfo.json",
-      drawsPerYear: 52,
-      fallbacks: []
-    },
-    sources: [
-      {
-        label: "Unofficial Norsk Tipping Lotto API (latest draw)",
-        url: "https://www.norsk-tipping.no/api-lotto/getResultInfo.json",
-        note: "JSON endpoint used by the unofficial wrappers github.com/Nilzone-/Norsk-Tipping and github.com/zrrrzzt/norsk-tipping-results. Add ?drawID=N for a specific draw."
-      }
-    ]
+    zoneSize: 10
   },
   eurojackpot: {
     id: "eurojackpot",
@@ -46,29 +31,7 @@ const LOTTERIES = {
     accent: "euro",
     defaultSumMin: 95,
     defaultSumMax: 160,
-    zoneSize: 10,
-    api: {
-      latest: "https://www.norsk-tipping.no/api-eurojackpot/getResultInfo.json",
-      drawsPerYear: 104,
-      fallbacks: [
-        {
-          label: "Lottoland unofficial API (latest draw only)",
-          url: "https://media.lottoland.com/api/drawings/euroJackpot"
-        }
-      ]
-    },
-    sources: [
-      {
-        label: "Unofficial Norsk Tipping Eurojackpot API (latest draw)",
-        url: "https://www.norsk-tipping.no/api-eurojackpot/getResultInfo.json",
-        note: "JSON endpoint used by the unofficial wrappers github.com/Nilzone-/Norsk-Tipping and github.com/zrrrzzt/norsk-tipping-results. Add ?drawID=N for a specific draw."
-      },
-      {
-        label: "Lottoland unofficial API (latest draw only)",
-        url: "https://media.lottoland.com/api/drawings/euroJackpot",
-        note: "Open JSON endpoint with the latest Eurojackpot draw."
-      }
-    ]
+    zoneSize: 10
   }
 };
 

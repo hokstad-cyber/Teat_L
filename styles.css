@@ -222,23 +222,6 @@ input:focus, textarea:focus, button:focus-visible {
 /* ============ History section ============ */
 
 .history-load label { display: block; font-size: 0.8rem; color: var(--text-dim); margin-bottom: 0.7rem; }
-.url-row { display: flex; gap: 0.5rem; margin-top: 0.3rem; }
-.url-row input { flex: 1; margin-top: 0; }
-
-.preset-links { display: flex; flex-direction: column; gap: 0.3rem; margin: 0 0 0.8rem; }
-.preset-links button {
-  text-align: left;
-  background: none;
-  border: none;
-  color: var(--accent);
-  font-size: 0.78rem;
-  cursor: pointer;
-  padding: 0;
-  text-decoration: underline;
-  text-underline-offset: 2px;
-}
-.preset-links button:hover { opacity: 0.85; }
-
 .btn-row { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
 
 .history-status {

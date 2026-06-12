@@ -211,18 +211,7 @@
         <p class="panel-hint">Load previous winning numbers and avoid repeating history.</p>
 
         <div class="history-load">
-          <div class="btn-row" style="margin-bottom: 0.8rem;">
-            <button id="history-auto" class="btn small primary">⤓ Fetch results automatically</button>
-          </div>
-          <p class="mini-hint" style="margin: 0 0 0.9rem;">Uses unofficial sources only: the JSON API behind the open-source wrappers <em>Nilzone-/Norsk-Tipping</em> and <em>zrrrzzt/norsk-tipping-results</em>, walking backwards through past draws — falling back to other unofficial APIs if it is unavailable. No official result pages are fetched.</p>
-          <label>Source page / API URL (manual)
-            <div class="url-row">
-              <input type="text" id="history-url" placeholder="https://…" />
-              <button id="history-fetch" class="btn small">Fetch</button>
-            </div>
-          </label>
-          <div id="history-presets" class="preset-links"></div>
-          <p class="mini-hint">Fetching tries the source directly first, then automatically falls back to public read-through mirrors when the provider blocks browser requests (CORS). Successful fetches are cached for 12 hours so the provider isn't hit repeatedly. If every route fails, copy the draws from the results page and paste them below — or import a downloaded CSV/JSON file.</p>
+          <p class="mini-hint" style="margin: 0 0 0.9rem;">Load previous winning numbers by pasting them or importing a downloaded CSV/JSON file — the app makes no network requests for results.</p>
 
           <label>Paste draws (one per line, e.g. <code>16.03.2024 1 5 12 19 23 28 31</code>)
             <textarea id="history-paste" rows="3" placeholder="date  n1 n2 n3 …"></textarea>
