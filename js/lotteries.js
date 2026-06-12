@@ -27,14 +27,9 @@ const LOTTERIES = {
     },
     sources: [
       {
-        label: "Norsk Tipping – unofficial Lotto API (latest draw)",
+        label: "Unofficial Norsk Tipping Lotto API (latest draw)",
         url: "https://www.norsk-tipping.no/api-lotto/getResultInfo.json",
-        note: "JSON endpoint used by the unofficial norsk-tipping npm wrappers. Add ?drawID=N for a specific draw."
-      },
-      {
-        label: "Norsk Tipping – Lotto results page",
-        url: "https://www.norsk-tipping.no/lotterier/lotto/resultater",
-        note: "Official results page. Direct fetch is usually blocked by CORS; open the page, copy the draws and paste them below, or download/export and import the file."
+        note: "JSON endpoint used by the unofficial wrappers github.com/Nilzone-/Norsk-Tipping and github.com/zrrrzzt/norsk-tipping-results. Add ?drawID=N for a specific draw."
       }
     ]
   },
@@ -64,19 +59,14 @@ const LOTTERIES = {
     },
     sources: [
       {
-        label: "Norsk Tipping – unofficial Eurojackpot API (latest draw)",
+        label: "Unofficial Norsk Tipping Eurojackpot API (latest draw)",
         url: "https://www.norsk-tipping.no/api-eurojackpot/getResultInfo.json",
-        note: "JSON endpoint used by the unofficial norsk-tipping npm wrappers. Add ?drawID=N for a specific draw."
+        note: "JSON endpoint used by the unofficial wrappers github.com/Nilzone-/Norsk-Tipping and github.com/zrrrzzt/norsk-tipping-results. Add ?drawID=N for a specific draw."
       },
       {
-        label: "Norsk Tipping – Eurojackpot results page",
-        url: "https://www.norsk-tipping.no/lotterier/eurojackpot/resultater",
-        note: "Official results page. Direct fetch is usually blocked by CORS; copy the draws and paste them below, or import a downloaded file."
-      },
-      {
-        label: "eurojackpot.org – results archive",
-        url: "https://www.euro-jackpot.net/results-archive",
-        note: "Results archive with yearly pages. If fetching fails due to CORS, copy/paste or import a CSV download."
+        label: "Lottoland unofficial API (latest draw only)",
+        url: "https://media.lottoland.com/api/drawings/euroJackpot",
+        note: "Open JSON endpoint with the latest Eurojackpot draw."
       }
     ]
   }

@@ -31,7 +31,8 @@ Load previously drawn winning numbers and stop the generator from repeating hist
   it fetches the latest draw, reads its `drawID`, and walks backwards through past
   draws (up to 160, sized by your lookback window) with limited concurrency. If that
   API is unavailable it falls back to other unofficial APIs (e.g. Lottoland for
-  Eurojackpot) and finally to parsing the result pages.
+  Eurojackpot). Only unofficial sources are fetched — never the official result
+  pages.
 - **Fetch from URL (manual)** — every fetch tries the provider directly first and
   automatically falls back to public read-through mirrors when the provider blocks
   browser requests (CORS). Successful fetches are cached for 12 hours per URL so

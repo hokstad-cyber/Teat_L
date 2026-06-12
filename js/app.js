@@ -462,23 +462,9 @@
           /* try next fallback */
         }
       }
-      // 3) Last resort: the result pages, parsed as text.
-      for (const src of cfg.sources) {
-        try {
-          setHistoryStatus(`Trying ${src.label}…`, false);
-          const { text, via } = await fetchViaRoutes(src.url, -1);
-          const draws = parseDraws(stripHtml(text), cfg);
-          if (draws.length) {
-            addDraws(draws, `${src.label} (via ${via})`);
-            return;
-          }
-        } catch (e) {
-          /* try next source */
-        }
-      }
       setHistoryStatus(
-        "Automatic fetching failed: the unofficial Norsk Tipping API, the backup APIs and the result pages were all unreachable or unparsable. " +
-          "Copy the draws from a results page and paste them below, or import a CSV/JSON file.",
+        "Automatic fetching failed: the unofficial Norsk Tipping API and the unofficial backup APIs were all unreachable or unparsable. " +
+          "Paste the draws in the box below, or import a CSV/JSON file.",
         false
       );
     } finally {
