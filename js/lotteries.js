@@ -16,7 +16,15 @@ const LOTTERIES = {
     // Typical sum band (~middle 80% of random 7-of-34 rows)
     defaultSumMin: 90,
     defaultSumMax: 155,
-    zoneSize: 10
+    zoneSize: 10,
+    crawl: {
+      api: "https://www.norsk-tipping.no/api-lotto/getResultInfo.json",
+      pages: [
+        "https://www.norsk-tipping.no/lotteri/lotto/resultater",
+        "https://www.norsk-tipping.no/lotterier/lotto/resultater"
+      ],
+      csvName: "lotto-results-2020-2026.csv"
+    }
   },
   eurojackpot: {
     id: "eurojackpot",
@@ -31,7 +39,15 @@ const LOTTERIES = {
     accent: "euro",
     defaultSumMin: 95,
     defaultSumMax: 160,
-    zoneSize: 10
+    zoneSize: 10,
+    crawl: {
+      api: "https://www.norsk-tipping.no/api-eurojackpot/getResultInfo.json",
+      pages: [
+        "https://www.norsk-tipping.no/lotteri/eurojackpot/resultater",
+        "https://www.norsk-tipping.no/lotterier/eurojackpot/resultater"
+      ],
+      csvName: "eurojackpot-results-2020-2026.csv"
+    }
   }
 };
 

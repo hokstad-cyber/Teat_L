@@ -223,6 +223,41 @@
     setHistoryStatus(`${prefix ? prefix + " " : ""}${all.length} ${LOTTERIES[state.lotteryId].name} draws loaded${rangeText}${windowText}.`, true);
   }
 
+  /* ---------- crawl (2020-2026 results + CSV) ---------- */
+
+  function downloadBlob(content, type, filename) {
+    const blob = new Blob([content], { type });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+
+  async function crawlHistory() {
+    const cfg = LOTTERIES[state.lotteryId];
+    const btn = $("#history-crawl");
+    btn.disabled = true;
+    const oldLabel = btn.textContent;
+    btn.textContent = "Crawling…";
+    try {
+      setHistoryStatus(`Crawling ${cfg.name} results 2020–2026…`, false);
+      const { draws, source } = await crawlLottery(cfg, (requests, message) => {
+        setHistoryStatus(message || `Crawling ${cfg.name} results 2020–2026… ${requests} requests so far`, false);
+      });
+      downloadBlob(buildResultsCsv(draws, cfg), "text/csv", cfg.crawl.csvName);
+      addDraws(draws, `${source} — CSV "${cfg.crawl.csvName}" downloaded`);
+    } catch (e) {
+      setHistoryStatus(
+        `Crawling failed (${e.message}). Paste the draws in the box below, or import a CSV/JSON file instead.`,
+        false
+      );
+    } finally {
+      btn.disabled = false;
+      btn.textContent = oldLabel;
+    }
+  }
+
   function loadDemoData() {
     // Synthetic draws, clearly for trying out the exclusion filters.
     const cfg = LOTTERIES[state.lotteryId];
@@ -494,6 +529,7 @@
       addDraws(parseDraws(text, LOTTERIES[state.lotteryId]), `"${file.name}"`);
       e.target.value = "";
     });
+    $("#history-crawl").addEventListener("click", crawlHistory);
     $("#history-demo").addEventListener("click", loadDemoData);
     $("#history-clear").addEventListener("click", () => {
       state.history[state.lotteryId] = [];

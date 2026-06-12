@@ -29,13 +29,13 @@ function assert(cond, name) {
 const {
   LOTTERIES, sampleDistinct, combinationKeys, longestConsecutiveRun, sumOf, countOdd,
   overlapCount, parseDrawsText, parseDraws, filterDrawsByYears, buildHistoryIndex,
-  dedupeDraws, generateTickets, longestParityRun, longestArithmeticProgression,
+  dedupeDraws, generateTickets, buildResultsCsv, longestParityRun, longestArithmeticProgression,
   maxSameLastDigit, maxSharedDivisor, zoneOfNumber, weightedSampleDistinct,
   drawsSinceLastSeen
 } = vm.runInContext(
   `({ LOTTERIES, sampleDistinct, combinationKeys, longestConsecutiveRun, sumOf, countOdd,
       overlapCount, parseDrawsText, parseDraws, filterDrawsByYears, buildHistoryIndex,
-      dedupeDraws, generateTickets, longestParityRun, longestArithmeticProgression,
+      dedupeDraws, generateTickets, buildResultsCsv, longestParityRun, longestArithmeticProgression,
       maxSameLastDigit, maxSharedDivisor, zoneOfNumber, weightedSampleDistinct,
       drawsSinceLastSeen })`,
   context
@@ -145,6 +145,25 @@ assert(jsonDraws[1].date.getFullYear() === 2023, "JSON drawDate parsed");
 }
 
 assert(dedupeDraws(draws.concat(draws)).length === 3, "dedupeDraws removes duplicates");
+
+/* CSV builder round-trips through the importer */
+{
+  const csv = buildResultsCsv(draws, lotto);
+  const lines = csv.split("\n");
+  assert(lines[0] === "date,n1,n2,n3,n4,n5,n6,n7", "CSV: lotto header");
+  assert(lines.length === 4, "CSV: one line per draw plus header");
+  assert(lines[1].startsWith("2024-03-16,"), "CSV: newest first with ISO date");
+  assert(parseDraws(csv, lotto).length === 3, "CSV: importer reads it back");
+
+  const euroCsv = buildResultsCsv(
+    [{ date: new Date(2024, 5, 14), mains: [7, 19, 28, 33, 45], stars: [3, 9] }],
+    euro
+  );
+  assert(euroCsv.split("\n")[0] === "date,n1,n2,n3,n4,n5,star1,star2", "CSV: euro header");
+  assert(euroCsv.split("\n")[1] === "2024-06-14,7,19,28,33,45,3,9", "CSV: euro row with stars and date");
+  const back = parseDraws(euroCsv, euro);
+  assert(back.length === 1 && back[0].stars.join(",") === "3,9", "CSV: euro round-trip");
+}
 
 const recent = filterDrawsByYears(draws, 3, new Date(2026, 5, 12));
 assert(recent.length === 2, "filterDrawsByYears keeps only the window");

@@ -211,7 +211,10 @@
         <p class="panel-hint">Load previous winning numbers and avoid repeating history.</p>
 
         <div class="history-load">
-          <p class="mini-hint" style="margin: 0 0 0.9rem;">Load previous winning numbers by pasting them or importing a downloaded CSV/JSON file — the app makes no network requests for results.</p>
+          <div class="btn-row" style="margin-bottom: 0.8rem;">
+            <button id="history-crawl" class="btn small primary">⛏ Crawl 2020–2026 results</button>
+          </div>
+          <p class="mini-hint" style="margin: 0 0 0.9rem;">Crawls the Norsk Tipping results for the current lottery (norsk-tipping.no/lotteri/…/resultater and its draw API), keeps the draws from 2020–2026, downloads them as a CSV file with the date on every row, and loads them straight into the app. The site may block browser requests (CORS) — backup mirrors are tried automatically. You can also paste draws or import a CSV/JSON file below.</p>
 
           <label>Paste draws (one per line, e.g. <code>16.03.2024 1 5 12 19 23 28 31</code>)
             <textarea id="history-paste" rows="3" placeholder="date  n1 n2 n3 …"></textarea>
@@ -313,6 +316,7 @@
   <script src="js/lotteries.js"></script>
   <script src="js/util.js"></script>
   <script src="js/history.js"></script>
+  <script src="js/crawler.js"></script>
   <script src="js/generator.js"></script>
   <script src="js/app.js"></script>
 </body>

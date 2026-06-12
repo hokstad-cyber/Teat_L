@@ -22,10 +22,14 @@ header. Each system keeps its own rules, sum-range defaults, theme colour and
 loaded history.
 
 ### Historical draws
-Load previously drawn winning numbers and stop the generator from repeating history.
-The app makes no network requests for results — history is loaded entirely from
-data you provide:
+Load previously drawn winning numbers and stop the generator from repeating history:
 
+- **Crawl 2020–2026 results** — crawls the Norsk Tipping results for the current
+  lottery (`norsk-tipping.no/lotteri/{lotto,eurojackpot}/resultater` and the draw
+  API behind them, walking backwards draw by draw until it passes 2020), keeps the
+  draws from 2020–2026, downloads them as a CSV file (`date,n1,…` — one dated row
+  per draw) and loads them straight into the app. Requests try the site directly
+  and fall back to public read-through mirrors when blocked by CORS.
 - **Paste draws** — one draw per line, e.g. `16.03.2024 1 5 12 19 23 28 31`
   (Eurojackpot: `14.06.2024 7 19 28 33 45 + 3 9`). Norwegian (`dd.mm.yyyy`) and ISO
   dates are both understood.

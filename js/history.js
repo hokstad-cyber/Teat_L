@@ -50,7 +50,8 @@ function parseDrawLine(line, cfg) {
   if (found) rest = line.replace(found.matched, " ");
   // Drop 4-digit years and anything attached to currency-ish tokens.
   rest = rest.replace(/\b\d{4,}\b/g, " ");
-  const tokens = rest.match(/\d{1,2}/g) || [];
+  // Digits glued to letters (header tokens like "n1", "star2") are not balls.
+  const tokens = rest.match(/(?<![A-Za-z0-9])\d{1,2}(?![A-Za-z0-9])/g) || [];
   const mains = [];
   const stars = [];
   for (const t of tokens) {
@@ -242,6 +243,27 @@ function drawsSinceLastSeen(draws, cfg) {
     for (const n of d.mains) if (last[n] === -1) last[n] = i;
   });
   return last.map((v) => (v === -1 ? sorted.length : v));
+}
+
+/** Build a CSV of draws (newest first): date,n1..nK[,star1..]. The same
+    format the file importer reads back. */
+function buildResultsCsv(draws, cfg) {
+  const header = ["date"];
+  for (let i = 1; i <= cfg.mainPick; i++) header.push("n" + i);
+  for (let i = 1; i <= cfg.starPick; i++) header.push("star" + i);
+  const sorted = draws
+    .slice()
+    .sort((a, b) => (b.date ? b.date.getTime() : 0) - (a.date ? a.date.getTime() : 0));
+  const lines = [header.join(",")];
+  for (const d of sorted) {
+    const iso = d.date
+      ? `${d.date.getFullYear()}-${String(d.date.getMonth() + 1).padStart(2, "0")}-${String(d.date.getDate()).padStart(2, "0")}`
+      : "";
+    const stars = d.stars.slice(0, cfg.starPick);
+    while (stars.length < cfg.starPick) stars.push("");
+    lines.push([iso, ...d.mains, ...stars].join(","));
+  }
+  return lines.join("\n");
 }
 
 function drawsDateRange(draws) {
