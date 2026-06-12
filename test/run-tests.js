@@ -30,12 +30,14 @@ const {
   LOTTERIES, sampleDistinct, combinationKeys, longestConsecutiveRun, sumOf, countOdd,
   overlapCount, parseDrawsText, parseDraws, filterDrawsByYears, buildHistoryIndex,
   dedupeDraws, generateTickets, longestParityRun, longestArithmeticProgression,
-  maxSameLastDigit, maxSharedDivisor, zoneOfNumber
+  maxSameLastDigit, maxSharedDivisor, zoneOfNumber, weightedSampleDistinct,
+  drawsSinceLastSeen
 } = vm.runInContext(
   `({ LOTTERIES, sampleDistinct, combinationKeys, longestConsecutiveRun, sumOf, countOdd,
       overlapCount, parseDrawsText, parseDraws, filterDrawsByYears, buildHistoryIndex,
       dedupeDraws, generateTickets, longestParityRun, longestArithmeticProgression,
-      maxSameLastDigit, maxSharedDivisor, zoneOfNumber })`,
+      maxSameLastDigit, maxSharedDivisor, zoneOfNumber, weightedSampleDistinct,
+      drawsSinceLastSeen })`,
   context
 );
 
@@ -53,6 +55,36 @@ assert(longestConsecutiveRun([5, 9, 14]) === 1, "longestConsecutiveRun no run");
 assert(combinationKeys([1, 2, 3], 2).join(" ") === "1-2 1-3 2-3", "combinationKeys 3 choose 2");
 assert(combinationKeys([1, 2, 3, 4], 4).length === 1, "combinationKeys n choose n");
 assert(overlapCount([1, 2, 3], [3, 4, 5]) === 1, "overlapCount");
+
+/* weighted sampling */
+{
+  let contains34 = 0;
+  for (let i = 0; i < 200; i++) {
+    const s = weightedSampleDistinct(pool, 7, (n) => (n === 34 ? 1000 : 1));
+    assert(s.length === 7 && new Set(s).size === 7, "weighted: 7 distinct");
+    assert(s.every((n, j) => j === 0 || n > s[j - 1]), "weighted: sorted");
+    if (s.includes(34)) contains34++;
+  }
+  assert(contains34 >= 190, `weighted: heavy number nearly always present (${contains34}/200)`);
+
+  // uniform weights behave like plain sampling (no crash, full coverage possible)
+  const u = weightedSampleDistinct(pool, 34, () => 1);
+  assert(u.length === 34 && u[0] === 1 && u[33] === 34, "weighted: can exhaust pool");
+}
+
+/* drawsSinceLastSeen */
+{
+  const cfg = { mainMax: 10 };
+  const mk = (iso, mains) => ({ date: new Date(iso), mains, stars: [] });
+  const hist = [
+    mk("2026-06-01", [1, 2, 3]),   // newest -> gap 0
+    mk("2026-05-01", [4, 5, 6]),   // gap 1
+    mk("2026-04-01", [1, 7, 8])    // gap 2 (1 already seen newer)
+  ];
+  const gaps = drawsSinceLastSeen(hist, cfg);
+  assert(gaps[1] === 0 && gaps[4] === 1 && gaps[7] === 2, "drawsSinceLastSeen: gaps per number");
+  assert(gaps[9] === 3 && gaps[10] === 3, "drawsSinceLastSeen: never-seen numbers most overdue");
+}
 
 assert(longestParityRun([3, 7, 11, 19, 22]) === 4, "parity run: four odds in a row");
 assert(longestParityRun([1, 2, 3, 4]) === 1, "parity run: alternating");
@@ -234,6 +266,21 @@ for (const cfg of [lotto, euro]) {
   crit.zoneSpread = { enabled: true, maxPerZone: 7, minPerZone: 5 }; // zone 31–34 has only 4 numbers (also 5×4 > 7)
   const r = generateTickets(10, lotto, crit, buildHistoryIndex([], 0));
   assert(r.tickets.length === 0 && r.warnings.some((w) => /31–34/.test(w)), "short-zone minimum rejected with warning");
+}
+
+/* bias weights flow through generation and still respect criteria */
+{
+  const crit = defaultCriteria(lotto);
+  crit.batchOverlap.enabled = false; // boosted numbers should be free to repeat across rows
+  const weights = new Array(35).fill(1);
+  for (let n = 30; n <= 34; n++) weights[n] = 50;
+  const { tickets } = generateTickets(10, lotto, crit, buildHistoryIndex([], 0), weights);
+  assert(tickets.length === 10, "bias: generates 10");
+  assert(tickets.every((t) => t.mains.some((n) => n >= 30)), "bias: every row contains a boosted number");
+  for (const t of tickets) {
+    assert(t.mains.length === 7 && new Set(t.mains).size === 7, "bias: rows stay valid");
+    if (!t.relaxed) assert(longestConsecutiveRun(t.mains) <= 2, "bias: criteria still enforced");
+  }
 }
 
 /* infeasible criteria are reported, not looped forever */

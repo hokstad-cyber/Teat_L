@@ -120,6 +120,43 @@
 
         <div class="criterion">
           <label class="toggle">
+            <input type="checkbox" id="bias-overdue" />
+            <span class="slider"></span>
+            <span class="toggle-label">Favour overdue numbers</span>
+          </label>
+          <div class="criterion-body" data-for="bias-overdue">
+            <label>Boost for numbers not picked lately
+              <span class="range-row">
+                <input type="range" id="bias-overdue-strength" min="0" max="100" value="50" />
+                <output id="bias-overdue-out">50&nbsp;%</output>
+              </span>
+            </label>
+            <p class="mini-hint">The longer a number has gone without being drawn (within your lookback window), the higher its chance of being suggested. Needs loaded history. Purely a style preference — the real odds never change.</p>
+          </div>
+        </div>
+
+        <div class="criterion">
+          <label class="toggle">
+            <input type="checkbox" id="bias-cold" />
+            <span class="slider"></span>
+            <span class="toggle-label">Favour rarely-picked numbers</span>
+          </label>
+          <div class="criterion-body" data-for="bias-cold">
+            <label>Boost for the least-drawn numbers
+              <span class="range-row">
+                <input type="range" id="bias-cold-strength" min="0" max="100" value="50" />
+                <output id="bias-cold-out">50&nbsp;%</output>
+              </span>
+            </label>
+            <label>Count how often each number was drawn within the last (years)
+              <input type="number" id="bias-cold-years" min="1" max="50" value="2" />
+            </label>
+            <p class="mini-hint">Numbers drawn least often in the chosen period get a higher chance of being suggested. Needs loaded history covering that period.</p>
+          </div>
+        </div>
+
+        <div class="criterion">
+          <label class="toggle">
             <input type="checkbox" id="crit-birthday" />
             <span class="slider"></span>
             <span class="toggle-label">Avoid birthday bias</span>
@@ -243,6 +280,7 @@
         <div class="hotcold">
           <div><strong>Hot:</strong> <span id="hot-numbers"></span></div>
           <div><strong>Cold:</strong> <span id="cold-numbers"></span></div>
+          <div><strong>Overdue:</strong> <span id="overdue-numbers"></span></div>
         </div>
       </section>
 

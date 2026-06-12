@@ -228,6 +228,22 @@ function numberFrequencies(draws, cfg) {
   return freq;
 }
 
+/**
+ * For each main number, how many draws ago it last appeared (0 = in the most
+ * recent draw). Numbers that never appeared get `draws.length` (most overdue).
+ * Draws are ordered newest-first by date; undated draws are treated as oldest.
+ */
+function drawsSinceLastSeen(draws, cfg) {
+  const sorted = draws
+    .slice()
+    .sort((a, b) => (b.date ? b.date.getTime() : -Infinity) - (a.date ? a.date.getTime() : -Infinity));
+  const last = new Array(cfg.mainMax + 1).fill(-1);
+  sorted.forEach((d, i) => {
+    for (const n of d.mains) if (last[n] === -1) last[n] = i;
+  });
+  return last.map((v) => (v === -1 ? sorted.length : v));
+}
+
 function drawsDateRange(draws) {
   let min = null;
   let max = null;

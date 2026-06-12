@@ -69,6 +69,8 @@
     "crit-parity", "crit-parity-value",
     "crit-pattern", "crit-pattern-max",
     "crit-birthday",
+    "bias-overdue", "bias-overdue-strength",
+    "bias-cold", "bias-cold-strength", "bias-cold-years",
     "crit-overlap", "crit-overlap-max",
     "crit-exclude", "crit-exclude-list",
     "crit-require", "crit-require-list",
@@ -542,9 +544,68 @@
     const fmtList = (pairs) => pairs.map(([n, f]) => `${n} (${f}×)`).join(", ");
     $("#hot-numbers").textContent = fmtList(ranked.slice(0, 5));
     $("#cold-numbers").textContent = fmtList(ranked.slice(-5).reverse());
+    const gaps = drawsSinceLastSeen(draws, cfg);
+    const overdue = [];
+    for (let n = 1; n <= cfg.mainMax; n++) overdue.push([n, gaps[n]]);
+    overdue.sort((a, b) => b[1] - a[1]);
+    $("#overdue-numbers").textContent = overdue
+      .slice(0, 5)
+      .map(([n, g]) => `${n} (${g >= draws.length ? "never" : g + " draws ago"})`)
+      .join(", ");
   }
 
   /* ---------- generation & rendering ---------- */
+
+  /* ---------- sampling bias (sliders) ----------
+     Slider 0-100 maps to a weight multiplier of up to 9x for the most
+     overdue / least-drawn number, scaling linearly down to 1x for numbers
+     with no claim to a boost. Both biases multiply together. */
+
+  const MAX_BIAS_MULTIPLIER = 8; // 0-100 % -> extra weight 0..8 on top of 1
+
+  function computeBiasWeights(cfg) {
+    const overdueOn = $("#bias-overdue").checked && intVal("bias-overdue-strength", 0) > 0;
+    const coldOn = $("#bias-cold").checked && intVal("bias-cold-strength", 0) > 0;
+    if (!overdueOn && !coldOn) return { weights: null, warnings: [] };
+
+    const all = state.history[state.lotteryId];
+    if (!all.length) {
+      return {
+        weights: null,
+        warnings: ["The overdue/rarely-picked sliders are active, but no historical draws are loaded — they have no effect yet."]
+      };
+    }
+
+    const warnings = [];
+    const weights = new Array(cfg.mainMax + 1).fill(1);
+
+    if (overdueOn) {
+      const gaps = drawsSinceLastSeen(activeDraws(), cfg);
+      const maxGap = Math.max(1, ...gaps.slice(1));
+      const k = (intVal("bias-overdue-strength", 0) / 100) * MAX_BIAS_MULTIPLIER;
+      for (let n = 1; n <= cfg.mainMax; n++) {
+        weights[n] *= 1 + k * (gaps[n] / maxGap);
+      }
+    }
+
+    if (coldOn) {
+      const periodDraws = filterDrawsByYears(all, intVal("bias-cold-years", 2));
+      if (!periodDraws.length) {
+        warnings.push("Rarely-picked slider: no loaded draws fall within the chosen period, so it has no effect.");
+      } else {
+        const freq = numberFrequencies(periodDraws, cfg);
+        const maxF = Math.max(...freq.slice(1));
+        const minF = Math.min(...freq.slice(1));
+        const span = Math.max(1, maxF - minF);
+        const k = (intVal("bias-cold-strength", 0) / 100) * MAX_BIAS_MULTIPLIER;
+        for (let n = 1; n <= cfg.mainMax; n++) {
+          weights[n] *= 1 + k * ((maxF - freq[n]) / span);
+        }
+      }
+    }
+
+    return { weights, warnings };
+  }
 
   function clearTickets() {
     state.tickets = [];
@@ -560,17 +621,20 @@
     const subsetSize = criteria.historySubset.enabled ? intVal("hist-subset-size", 4) : 0;
     const historyIndex = buildHistoryIndex(activeDraws(), subsetSize);
 
+    const preWarnings = [];
     if ((criteria.historyExact.enabled || criteria.historySubset.enabled) && historyIndex.drawCount === 0) {
-      showWarnings(["History-based exclusions are on, but no historical draws are loaded for this lottery — they have no effect yet."], false);
-    } else {
-      $("#warnings").hidden = true;
+      preWarnings.push("History-based exclusions are on, but no historical draws are loaded for this lottery — they have no effect yet.");
     }
+    const bias = computeBiasWeights(cfg);
+    preWarnings.push(...bias.warnings);
 
-    const { tickets, warnings } = generateTickets(10, cfg, criteria, historyIndex);
+    const { tickets, warnings } = generateTickets(10, cfg, criteria, historyIndex, bias.weights);
     state.tickets = tickets;
     state.generatedFor = cfg.id;
 
-    if (warnings.length) showWarnings(warnings, tickets.length === 0);
+    const allWarnings = preWarnings.concat(warnings);
+    if (allWarnings.length) showWarnings(allWarnings, tickets.length === 0);
+    else $("#warnings").hidden = true;
     renderTickets(cfg);
     saveState();
   }
@@ -662,6 +726,13 @@
 
     $("#switch-lotto").addEventListener("click", () => switchLottery("lotto"));
     $("#switch-eurojackpot").addEventListener("click", () => switchLottery("eurojackpot"));
+
+    for (const [slider, out] of [["bias-overdue-strength", "bias-overdue-out"], ["bias-cold-strength", "bias-cold-out"]]) {
+      const el = document.getElementById(slider);
+      const sync = () => (document.getElementById(out).textContent = el.value + " %");
+      el.addEventListener("input", sync);
+      sync();
+    }
 
     document.body.addEventListener("change", (e) => {
       if (e.target.matches("input")) {

@@ -18,6 +18,42 @@ function randInt(maxExclusive) {
   return Math.floor(Math.random() * maxExclusive);
 }
 
+/** Cryptographic uniform float in [0, 1). */
+function randFloat() {
+  return randInt(0x100000000) / 0x100000000;
+}
+
+/**
+ * Sample `count` distinct integers from `pool` with per-number weights
+ * (weighted sampling without replacement), sorted ascending. `weightOf(n)`
+ * returns the relative chance of n on each pick; non-positive weights are
+ * clamped to a tiny epsilon so every pool number stays possible.
+ */
+function weightedSampleDistinct(pool, count, weightOf) {
+  if (count > pool.length) throw new Error("weightedSampleDistinct: pool too small");
+  const items = pool.slice();
+  const out = [];
+  for (let k = 0; k < count; k++) {
+    let total = 0;
+    const cum = new Array(items.length);
+    for (let i = 0; i < items.length; i++) {
+      total += Math.max(weightOf(items[i]), 1e-9);
+      cum[i] = total;
+    }
+    const r = randFloat() * total;
+    let idx = cum.length - 1;
+    for (let i = 0; i < cum.length; i++) {
+      if (r < cum[i]) {
+        idx = i;
+        break;
+      }
+    }
+    out.push(items[idx]);
+    items.splice(idx, 1);
+  }
+  return out.sort((a, b) => a - b);
+}
+
 /** Sample `count` distinct integers from `pool` (array), sorted ascending. */
 function sampleDistinct(pool, count) {
   if (count > pool.length) throw new Error("sampleDistinct: pool too small");

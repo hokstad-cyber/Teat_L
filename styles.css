@@ -170,6 +170,22 @@ body {
 
 .criterion-body input[type="number"] { width: 6.5rem; }
 
+/* Range sliders (bias controls) */
+.range-row { display: flex; align-items: center; gap: 0.7rem; margin-top: 0.35rem; }
+.range-row input[type="range"] {
+  flex: 1;
+  accent-color: var(--accent);
+  height: 4px;
+  cursor: pointer;
+}
+.range-row output {
+  min-width: 3.2rem;
+  text-align: right;
+  font-weight: 700;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
 input:focus, textarea:focus, button:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;

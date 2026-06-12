@@ -64,10 +64,17 @@ A statistics panel shows per-number frequency and hot/cold numbers for the activ
 | Spread across number zones | Between *min* and *max* numbers per zone of ten (1–10, 11–20, …); a minimum above 0 forces every zone to be represented |
 | Limit odd/even streaks | Rejects rows containing more than *N* consecutive only-odd or only-even numbers (e.g. 3, 7, 11, 19) |
 | Pattern guard | Rejects rows where more than *N* (default 4) numbers form an equal-gap progression (5, 10, 15, 20, 25), share the same final digit (7, 17, 27, …), or are multiples of the same small number (3, 5 or 7) |
+| Favour overdue numbers (slider) | Raises the sampling weight of numbers that have gone longest without being drawn within the lookback window — up to 9× at 100 % |
+| Favour rarely-picked numbers (slider) | Raises the sampling weight of the numbers drawn least often within a user-chosen period (in years) — up to 9× at 100 % |
 | Avoid birthday bias | Requires at least one number above 31 (fewer co-winners if you win) |
 | Limit overlap between rows | No two of your 10 rows share more than *N* numbers |
 | Exclude specific numbers | Numbers that must never be picked |
 | Always include lucky numbers | Numbers forced into every row |
+
+The two sliders are sampling *biases* rather than filters: they use weighted
+sampling without replacement, so boosted numbers become more likely to be
+suggested while every valid row remains possible. Both need loaded history, and
+the statistics panel shows the corresponding hot/cold/overdue numbers.
 
 If the hard exclusions make the style criteria unsatisfiable, the generator relaxes
 the style rules for that row (never the exclusions) and flags the row as *relaxed*.

@@ -139,8 +139,12 @@ function rowPassesCriteria(mains, cfg, criteria, historyIndex, previousRows, rel
  * If the soft (style) criteria can't be met after many attempts, they are
  * relaxed for that row — hard exclusions (history, required numbers,
  * batch overlap, excluded numbers) are never relaxed.
+ *
+ * `weights` (optional): array indexed 1..mainMax of relative sampling
+ * weights for the main numbers, used to bias the suggestions towards e.g.
+ * overdue or rarely-drawn numbers. Null/undefined means uniform sampling.
  */
-function generateTickets(count, cfg, criteria, historyIndex) {
+function generateTickets(count, cfg, criteria, historyIndex, weights) {
   const warnings = [];
   const problems = validateCriteriaFeasibility(cfg, criteria);
   if (problems.length) return { tickets: [], warnings: problems };
@@ -164,9 +168,11 @@ function generateTickets(count, cfg, criteria, historyIndex) {
 
     for (let attempt = 0; attempt < MAX_ATTEMPTS_PER_ROW; attempt++) {
       const useRelaxed = attempt >= softBudget;
-      const mains = sampleDistinct(pool, cfg.mainPick - required.length)
-        .concat(required)
-        .sort((a, b) => a - b);
+      const pickCount = cfg.mainPick - required.length;
+      const sampled = weights
+        ? weightedSampleDistinct(pool, pickCount, (n) => weights[n] || 1)
+        : sampleDistinct(pool, pickCount);
+      const mains = sampled.concat(required).sort((a, b) => a - b);
       if (rowPassesCriteria(mains, cfg, criteria, historyIndex, previousRows, useRelaxed)) {
         const stars = cfg.starPick > 0 ? sampleDistinct(starPool, cfg.starPick) : [];
         ticket = { mains, stars, relaxed: useRelaxed };
