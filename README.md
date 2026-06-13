@@ -47,6 +47,15 @@ History controls:
 
 A statistics panel shows per-number frequency and hot/cold numbers for the active window.
 
+### Last draw & reuse
+A highlighted **Last draw** card (gold-ringed balls) shows the most recent draw — the
+newest dated row in your history, or one you type in yourself via **Edit**. A dual-thumb
+**reuse** slider then lets each generated row carry over a chosen *range* of numbers from
+that last draw — e.g. exactly 0, 0–1, 0–2, 1–3, … up to all of them. The carried-over
+numbers are highlighted in gold in every generated row, with a `↻ N` badge showing how
+many were reused. Reuse is enforced structurally (not by trial and error), so even high
+reuse counts generate instantly.
+
 ### Selection criteria (each one can be toggled)
 
 | Criterion | What it does |

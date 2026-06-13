@@ -263,6 +263,95 @@ body[data-lottery="eurojackpot"] .btn.primary { color: #221a05; }
 .btn.danger:hover:not(:disabled) { border-color: var(--danger); color: var(--danger); }
 .file-btn { display: inline-block; }
 
+/* ============ Last draw card ============ */
+
+.lastdraw-card {
+  background: linear-gradient(135deg, var(--accent-soft), transparent 70%), var(--panel);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  padding: 1rem 1.2rem;
+  margin-bottom: 1.2rem;
+  box-shadow: var(--shadow);
+}
+.lastdraw-top { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+.lastdraw-title { display: flex; align-items: center; gap: 0.7rem; }
+.lastdraw-title h2 { margin: 0; font-size: 1.05rem; }
+.lastdraw-star { font-size: 1.5rem; color: var(--gold); line-height: 1; }
+.lastdraw-meta { margin: 0.1rem 0 0; color: var(--text-dim); font-size: 0.8rem; }
+
+.lastdraw-balls { display: flex; flex-wrap: wrap; gap: 0.45rem; align-items: center; margin: 0.9rem 0 0.2rem; min-height: 38px; }
+.lastdraw-balls .empty-note { color: var(--text-dim); font-size: 0.85rem; }
+.lastdraw-balls .ball { box-shadow: 0 0 0 2px var(--gold), 0 3px 8px rgba(0, 0, 0, 0.35); }
+
+.lastdraw-editor { margin: 0.9rem 0 0.2rem; }
+.lastdraw-editor label { display: block; font-size: 0.8rem; color: var(--text-dim); margin-bottom: 0.3rem; }
+.lastdraw-editor input[type="text"] {
+  width: 100%;
+  background: var(--bg-soft);
+  border: 1px solid var(--panel-edge);
+  border-radius: 8px;
+  color: var(--text);
+  padding: 0.5rem 0.6rem;
+  font: inherit;
+  margin-bottom: 0.6rem;
+}
+
+.reuse-control { border-top: 1px solid var(--panel-edge); margin-top: 1rem; padding-top: 0.9rem; }
+.reuse-body { margin: 0.8rem 0 0.2rem; display: none; }
+.reuse-body.open { display: block; }
+.reuse-summary { margin: 0.9rem 0 0; font-size: 0.85rem; color: var(--text-dim); }
+.reuse-summary strong { color: var(--text); }
+
+/* Dual-range slider */
+.dual-range { position: relative; height: 30px; }
+.dual-track {
+  position: absolute;
+  top: 13px;
+  left: 0;
+  right: 0;
+  height: 5px;
+  border-radius: 999px;
+  background: var(--bg-soft);
+  border: 1px solid var(--panel-edge);
+}
+.dual-fill { position: absolute; height: 100%; border-radius: 999px; background: var(--accent); }
+.dual-range input[type="range"] {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  margin: 0;
+  height: 30px;
+  background: none;
+  pointer-events: none;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.dual-range input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  pointer-events: auto;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  border: 3px solid var(--accent);
+  cursor: pointer;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.4);
+}
+.dual-range input[type="range"]::-moz-range-thumb {
+  pointer-events: auto;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  border: 3px solid var(--accent);
+  cursor: pointer;
+}
+
+/* Carried-over numbers in generated tickets */
+.ball.carried { box-shadow: 0 0 0 2px var(--gold), 0 3px 8px rgba(0, 0, 0, 0.35); }
+
 /* ============ Tickets ============ */
 
 .content-header {

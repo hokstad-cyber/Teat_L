@@ -16,6 +16,8 @@
  *   batchOverlap:  { enabled, maxShared }  // vs already generated rows
  *   historyExact:  { enabled }
  *   historySubset: { enabled }          // uses historyIndex.subsetKeys
+ *   reuseLast:     { enabled, min, max, numbers: number[] } // carry over
+ *                  // between min and max numbers from the last draw
  * }
  */
 
@@ -66,6 +68,26 @@ function validateCriteriaFeasibility(cfg, criteria) {
   }
   if (criteria.birthdayBias.enabled && cfg.mainMax <= 31) {
     problems.push("Birthday-bias criterion needs numbers above 31, which this lottery does not have.");
+  }
+  if (criteria.reuseLast && criteria.reuseLast.enabled) {
+    const r = criteria.reuseLast;
+    const last = (r.numbers || []).filter((n) => n >= 1 && n <= cfg.mainMax);
+    if (!last.length) {
+      problems.push("Reuse from last draw is on, but no last draw is set — enter or load one first.");
+    } else if (r.min > r.max) {
+      problems.push("Reuse from last draw: minimum is greater than maximum.");
+    } else if (r.min > cfg.mainPick) {
+      problems.push(`Reuse from last draw: cannot reuse ${r.min} numbers — a row only holds ${cfg.mainPick}.`);
+    } else {
+      const reqInLast = required.filter((n) => last.includes(n)).length;
+      const availFromLast = new Set(last.filter((n) => !excluded.includes(n))).size;
+      if (r.max < reqInLast) {
+        problems.push(`Reuse from last draw: ${reqInLast} required number(s) are already in the last draw, exceeding the maximum of ${r.max}.`);
+      }
+      if (r.min > availFromLast) {
+        problems.push(`Reuse from last draw: only ${availFromLast} of the last draw's numbers are available (after exclusions), fewer than the minimum of ${r.min}.`);
+      }
+    }
   }
   return problems;
 }
@@ -130,7 +152,26 @@ function rowPassesCriteria(mains, cfg, criteria, historyIndex, previousRows, rel
     }
   }
 
+  // Reuse-from-last-draw is satisfied structurally by the sampler, but verify
+  // defensively — it is a hard constraint and never relaxed.
+  if (criteria.reuseLast && criteria.reuseLast.enabled && criteria.reuseLast.numbers.length) {
+    const lastSet = new Set(criteria.reuseLast.numbers);
+    const shared = mains.reduce((c, n) => c + (lastSet.has(n) ? 1 : 0), 0);
+    if (shared < criteria.reuseLast.min || shared > criteria.reuseLast.max) return false;
+  }
+
   return true;
+}
+
+/** How many last-draw numbers to carry into the next row, picked at random
+    within the feasible band. Returns null if infeasible. */
+function chooseReuseCount(reuseLast, required, lastPoolSize, otherPoolSize, need) {
+  const reqInLast = required.reduce((c, n) => c + (reuseLast.numbers.includes(n) ? 1 : 0), 0);
+  // a = extra numbers drawn from the last-draw pool; total reuse = reqInLast + a.
+  let aMin = Math.max(0, reuseLast.min - reqInLast, need - otherPoolSize);
+  let aMax = Math.min(lastPoolSize, reuseLast.max - reqInLast, need);
+  if (aMin > aMax) return null;
+  return aMin + randInt(aMax - aMin + 1);
 }
 
 /**
@@ -158,6 +199,17 @@ function generateTickets(count, cfg, criteria, historyIndex, weights) {
   const starPool = [];
   for (let n = 1; n <= cfg.starMax; n++) starPool.push(n);
 
+  // Reuse-from-last-draw splits the pool so each row can carry over a chosen
+  // number of last-draw numbers by construction.
+  const reuse = criteria.reuseLast && criteria.reuseLast.enabled && criteria.reuseLast.numbers.length
+    ? criteria.reuseLast
+    : null;
+  const lastSet = reuse ? new Set(reuse.numbers) : null;
+  const lastPool = reuse ? pool.filter((n) => lastSet.has(n)) : null;
+  const otherPool = reuse ? pool.filter((n) => !lastSet.has(n)) : null;
+  const weightOf = weights ? (n) => weights[n] || 1 : null;
+  const pick = (arr, k) => (weightOf ? weightedSampleDistinct(arr, k, weightOf) : sampleDistinct(arr, k));
+
   const tickets = [];
   const previousRows = [];
 
@@ -169,9 +221,14 @@ function generateTickets(count, cfg, criteria, historyIndex, weights) {
     for (let attempt = 0; attempt < MAX_ATTEMPTS_PER_ROW; attempt++) {
       const useRelaxed = attempt >= softBudget;
       const pickCount = cfg.mainPick - required.length;
-      const sampled = weights
-        ? weightedSampleDistinct(pool, pickCount, (n) => weights[n] || 1)
-        : sampleDistinct(pool, pickCount);
+      let sampled;
+      if (reuse) {
+        const a = chooseReuseCount(reuse, required, lastPool.length, otherPool.length, pickCount);
+        if (a === null) break; // infeasible (also reported by validation)
+        sampled = pick(lastPool, a).concat(pick(otherPool, pickCount - a));
+      } else {
+        sampled = pick(pool, pickCount);
+      }
       const mains = sampled.concat(required).sort((a, b) => a - b);
       if (rowPassesCriteria(mains, cfg, criteria, historyIndex, previousRows, useRelaxed)) {
         const stars = cfg.starPick > 0 ? sampleDistinct(starPool, cfg.starPick) : [];

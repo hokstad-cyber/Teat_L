@@ -8,6 +8,11 @@
     lotteryId: "lotto",
     /** draws per lottery id */
     history: { lotto: [], eurojackpot: [] },
+    /** manual override of the last draw per lottery id (mains/stars) or null */
+    lastDrawOverride: { lotto: null, eurojackpot: null },
+    /** effective last draw for the active lottery, and its main-number set */
+    lastDraw: null,
+    lastDrawSet: new Set(),
     tickets: [],
     generatedFor: null
   };
@@ -21,6 +26,7 @@
       const serializable = {
         lotteryId: state.lotteryId,
         history: {},
+        lastDrawOverride: state.lastDrawOverride,
         settings: collectSettings()
       };
       for (const id of Object.keys(state.history)) {
@@ -58,6 +64,14 @@
           }));
       }
     }
+    if (data.lastDrawOverride && typeof data.lastDrawOverride === "object") {
+      for (const id of Object.keys(state.lastDrawOverride)) {
+        const o = data.lastDrawOverride[id];
+        if (o && Array.isArray(o.mains)) {
+          state.lastDrawOverride[id] = { mains: o.mains, stars: Array.isArray(o.stars) ? o.stars : [] };
+        }
+      }
+    }
     if (data.settings) applySettings(data.settings);
   }
 
@@ -76,7 +90,8 @@
     "crit-require", "crit-require-list",
     "hist-window", "hist-window-years",
     "hist-exact",
-    "hist-subset", "hist-subset-size"
+    "hist-subset", "hist-subset-size",
+    "reuse-enabled", "reuse-min", "reuse-max"
   ];
 
   function collectSettings() {
@@ -144,7 +159,13 @@
       },
       batchOverlap: { enabled: $("#crit-overlap").checked, maxShared: intVal("crit-overlap-max", 4) },
       historyExact: { enabled: $("#hist-exact").checked },
-      historySubset: { enabled: $("#hist-subset").checked }
+      historySubset: { enabled: $("#hist-subset").checked },
+      reuseLast: {
+        enabled: $("#reuse-enabled").checked,
+        min: Math.min(intVal("reuse-min", 0), intVal("reuse-max", 0)),
+        max: Math.max(intVal("reuse-min", 0), intVal("reuse-max", 0)),
+        numbers: state.lastDraw ? state.lastDraw.mains.slice() : []
+      }
     };
   }
 
@@ -181,8 +202,16 @@
     $("#hist-subset-size").max = cfg.mainPick;
     if (intVal("hist-subset-size", 4) > cfg.mainPick) $("#hist-subset-size").value = cfg.mainPick - 1;
 
+    // Reuse range spans 0..mainPick for this lottery.
+    $("#reuse-min").max = cfg.mainPick;
+    $("#reuse-max").max = cfg.mainPick;
+    if (intVal("reuse-min", 0) > cfg.mainPick) $("#reuse-min").value = 0;
+    if (intVal("reuse-max", 0) > cfg.mainPick) $("#reuse-max").value = cfg.mainPick;
+
     clearTickets();
     refreshHistoryStatus();
+    refreshLastDraw();
+    syncReuseUI();
     renderStats();
     saveState();
   }
@@ -199,6 +228,7 @@
     const added = state.history[state.lotteryId].length - before;
     refreshHistoryStatus(`Added ${added} new draw${added === 1 ? "" : "s"} from ${sourceLabel} (${draws.length - added} duplicates skipped).`);
     renderStats();
+    refreshLastDraw();
     saveState();
   }
 
@@ -221,6 +251,101 @@
     const windowText =
       active.length === all.length ? "" : ` · ${active.length} within the active ${intVal("hist-window-years", 0)}-year window`;
     setHistoryStatus(`${prefix ? prefix + " " : ""}${all.length} ${LOTTERIES[state.lotteryId].name} draws loaded${rangeText}${windowText}.`, true);
+  }
+
+  /* ---------- last draw + reuse ---------- */
+
+  /** Most recent dated draw in the full history (undated draws ignored). */
+  function newestHistoryDraw() {
+    let best = null;
+    for (const d of state.history[state.lotteryId]) {
+      if (!d.date) continue;
+      if (!best || d.date > best.date) best = d;
+    }
+    return best;
+  }
+
+  /** Recompute the effective last draw (manual override wins) and redraw it. */
+  function refreshLastDraw() {
+    const id = state.lotteryId;
+    const override = state.lastDrawOverride[id];
+    const draw = override
+      ? { date: null, mains: override.mains.slice(), stars: (override.stars || []).slice(), manual: true }
+      : newestHistoryDraw();
+    state.lastDraw = draw;
+    state.lastDrawSet = new Set(draw ? draw.mains : []);
+    renderLastDraw();
+  }
+
+  function renderLastDraw() {
+    const cfg = LOTTERIES[state.lotteryId];
+    const draw = state.lastDraw;
+    const ballsWrap = $("#lastdraw-balls");
+    const meta = $("#lastdraw-meta");
+    if (!draw) {
+      ballsWrap.innerHTML = '<span class="empty-note">No last draw yet — load history or press Edit to enter one.</span>';
+      meta.textContent = "No last draw set.";
+      return;
+    }
+    const mainBalls = draw.mains.map((n) => `<span class="ball">${n}</span>`).join("");
+    const starBalls = draw.stars && draw.stars.length
+      ? '<span class="star-sep">+</span>' + draw.stars.map((n) => `<span class="ball star">${n}</span>`).join("")
+      : "";
+    ballsWrap.innerHTML = mainBalls + starBalls;
+    if (draw.manual) {
+      meta.textContent = "Entered manually.";
+    } else {
+      const fmt = draw.date.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
+      meta.textContent = `Newest draw in your history — ${fmt}.`;
+    }
+  }
+
+  function openLastDrawEditor() {
+    const draw = state.lastDraw;
+    $("#lastdraw-input").value = draw ? draw.mains.join(" ") + (draw.stars && draw.stars.length ? " + " + draw.stars.join(" ") : "") : "";
+    $("#lastdraw-editor").hidden = false;
+    $("#lastdraw-input").focus();
+  }
+
+  function saveLastDraw() {
+    const cfg = LOTTERIES[state.lotteryId];
+    const parsed = parseDrawLine($("#lastdraw-input").value, cfg);
+    if (!parsed) {
+      setHistoryStatus(`That does not look like a valid ${cfg.name} draw — enter ${cfg.mainPick} numbers from 1–${cfg.mainMax}${cfg.starPick ? ` and ${cfg.starPick} star numbers from 1–${cfg.starMax}` : ""}.`, false);
+      return;
+    }
+    state.lastDrawOverride[state.lotteryId] = { mains: parsed.mains, stars: parsed.stars };
+    $("#lastdraw-editor").hidden = true;
+    refreshLastDraw();
+    saveState();
+  }
+
+  function resetLastDraw() {
+    state.lastDrawOverride[state.lotteryId] = null;
+    $("#lastdraw-editor").hidden = true;
+    refreshLastDraw();
+    saveState();
+  }
+
+  /** Keep the two range thumbs ordered, paint the fill, update the summary. */
+  function syncReuseUI() {
+    const cfg = LOTTERIES[state.lotteryId];
+    let lo = intVal("reuse-min", 0);
+    let hi = intVal("reuse-max", 0);
+    if (lo > hi) {
+      // Snap whichever thumb the user is dragging past the other.
+      [lo, hi] = [Math.min(lo, hi), Math.max(lo, hi)];
+      $("#reuse-min").value = lo;
+      $("#reuse-max").value = hi;
+    }
+    const max = cfg.mainPick;
+    const fill = $("#reuse-fill");
+    fill.style.left = (lo / max) * 100 + "%";
+    fill.style.width = ((hi - lo) / max) * 100 + "%";
+    const label = lo === hi ? `exactly <strong>${lo}</strong>` : `<strong>${lo}–${hi}</strong>`;
+    const noun = hi === 1 && lo <= 1 ? "number" : "numbers";
+    $("#reuse-summary").innerHTML = `Carry over ${label} of these ${noun} into each generated row.`;
+    $("#reuse-body").classList.toggle("open", $("#reuse-enabled").checked);
   }
 
   /* ---------- crawl (2020-2026 results + CSV) ---------- */
@@ -421,16 +546,22 @@
       for (const id of ["btn-copy", "btn-csv", "btn-print"]) $("#" + id).disabled = true;
       return;
     }
+    // Highlight numbers carried over from the last draw only when reuse is on.
+    const highlight = $("#reuse-enabled").checked ? state.lastDrawSet : new Set();
     state.tickets.forEach((t, i) => {
       const card = document.createElement("div");
       card.className = "ticket";
       card.style.setProperty("--i", i);
-      const balls = t.mains.map((n) => `<span class="ball">${n}</span>`).join("");
+      const balls = t.mains
+        .map((n) => `<span class="ball${highlight.has(n) ? " carried" : ""}"${highlight.has(n) ? ' title="Carried over from the last draw"' : ""}>${n}</span>`)
+        .join("");
       const stars = t.stars.length
         ? `<span class="star-sep">+</span>` + t.stars.map((n) => `<span class="ball star">${n}</span>`).join("")
         : "";
+      const carried = highlight.size ? t.mains.filter((n) => highlight.has(n)).length : 0;
+      const reuseFlag = carried ? `<span class="ticket-flag" title="Numbers reused from the last draw">↻ ${carried}</span>` : "";
       const flag = t.relaxed ? '<span class="ticket-flag" title="Style criteria were relaxed for this row">relaxed</span>' : "";
-      card.innerHTML = `<span class="ticket-no">#${i + 1}</span><span class="ticket-balls">${balls}${stars}</span>${flag}`;
+      card.innerHTML = `<span class="ticket-no">#${i + 1}</span><span class="ticket-balls">${balls}${stars}</span>${reuseFlag}${flag}`;
       wrap.appendChild(card);
     });
     for (const id of ["btn-copy", "btn-csv", "btn-print"]) $("#" + id).disabled = false;
@@ -535,11 +666,25 @@
       state.history[state.lotteryId] = [];
       refreshHistoryStatus();
       renderStats();
+      refreshLastDraw();
       saveState();
     });
 
+    // Last draw editor + reuse dual-range.
+    $("#lastdraw-edit").addEventListener("click", openLastDrawEditor);
+    $("#lastdraw-save").addEventListener("click", saveLastDraw);
+    $("#lastdraw-cancel").addEventListener("click", () => ($("#lastdraw-editor").hidden = true));
+    $("#lastdraw-reset").addEventListener("click", resetLastDraw);
+    $("#lastdraw-input").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") saveLastDraw();
+    });
+    for (const id of ["reuse-enabled", "reuse-min", "reuse-max"]) {
+      document.getElementById(id).addEventListener("input", syncReuseUI);
+    }
+
     switchLottery(state.lotteryId);
     syncCriterionBodies();
+    syncReuseUI();
   }
 
   document.addEventListener("DOMContentLoaded", init);

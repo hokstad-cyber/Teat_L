@@ -293,6 +293,47 @@
         </div>
       </div>
 
+      <section class="lastdraw-card" id="lastdraw-card">
+        <div class="lastdraw-top">
+          <div class="lastdraw-title">
+            <span class="lastdraw-star" aria-hidden="true">★</span>
+            <div>
+              <h2>Last draw</h2>
+              <p class="lastdraw-meta" id="lastdraw-meta">No last draw set.</p>
+            </div>
+          </div>
+          <button id="lastdraw-edit" class="btn small ghost">Edit</button>
+        </div>
+
+        <div id="lastdraw-balls" class="lastdraw-balls"></div>
+
+        <div id="lastdraw-editor" class="lastdraw-editor" hidden>
+          <label for="lastdraw-input">Enter the most recent winning numbers</label>
+          <input type="text" id="lastdraw-input" placeholder="e.g. 3 9 17 21 25 28 31" />
+          <div class="btn-row">
+            <button id="lastdraw-save" class="btn small primary">Save last draw</button>
+            <button id="lastdraw-cancel" class="btn small ghost">Cancel</button>
+            <button id="lastdraw-reset" class="btn small">Use newest from history</button>
+          </div>
+        </div>
+
+        <div class="reuse-control">
+          <label class="toggle">
+            <input type="checkbox" id="reuse-enabled" />
+            <span class="slider"></span>
+            <span class="toggle-label">Reuse numbers from the last draw</span>
+          </label>
+          <div class="reuse-body" id="reuse-body">
+            <div class="dual-range" id="reuse-range">
+              <div class="dual-track"><div class="dual-fill" id="reuse-fill"></div></div>
+              <input type="range" id="reuse-min" min="0" max="7" value="0" />
+              <input type="range" id="reuse-max" min="0" max="7" value="2" />
+            </div>
+            <p class="reuse-summary" id="reuse-summary">Carry over <strong>0–2</strong> of these numbers into each generated row.</p>
+          </div>
+        </div>
+      </section>
+
       <div id="warnings" class="warnings" hidden></div>
 
       <div id="tickets" class="tickets">

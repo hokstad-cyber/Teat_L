@@ -183,7 +183,8 @@ function defaultCriteria(cfg) {
     requireNumbers: { enabled: false, numbers: [] },
     batchOverlap: { enabled: true, maxShared: 4 },
     historyExact: { enabled: true },
-    historySubset: { enabled: true }
+    historySubset: { enabled: true },
+    reuseLast: { enabled: false, min: 0, max: 0, numbers: [] }
   };
 }
 
@@ -300,6 +301,56 @@ for (const cfg of [lotto, euro]) {
     assert(t.mains.length === 7 && new Set(t.mains).size === 7, "bias: rows stay valid");
     if (!t.relaxed) assert(longestConsecutiveRun(t.mains) <= 2, "bias: criteria still enforced");
   }
+}
+
+/* reuse-from-last-draw: exact count */
+{
+  const last = [3, 9, 17, 21, 25, 28, 31];
+  const crit = defaultCriteria(lotto);
+  crit.reuseLast = { enabled: true, min: 2, max: 2, numbers: last };
+  const { tickets } = generateTickets(10, lotto, crit, buildHistoryIndex([], 0));
+  assert(tickets.length === 10, "reuse: generates 10");
+  for (const t of tickets) {
+    const shared = t.mains.filter((n) => last.includes(n)).length;
+    assert(shared === 2, `reuse: exactly 2 carried over (got ${shared})`);
+  }
+}
+
+/* reuse-from-last-draw: range 1..3, and 0 means a fresh row */
+{
+  const last = [3, 9, 17, 21, 25, 28, 31];
+  const crit = defaultCriteria(lotto);
+  crit.reuseLast = { enabled: true, min: 1, max: 3, numbers: last };
+  const { tickets } = generateTickets(10, lotto, crit, buildHistoryIndex([], 0));
+  assert(tickets.every((t) => {
+    const s = t.mains.filter((n) => last.includes(n)).length;
+    return s >= 1 && s <= 3;
+  }), "reuse: range 1-3 respected");
+
+  const crit0 = defaultCriteria(lotto);
+  crit0.reuseLast = { enabled: true, min: 0, max: 0, numbers: last };
+  const r0 = generateTickets(10, lotto, crit0, buildHistoryIndex([], 0));
+  assert(r0.tickets.every((t) => t.mains.every((n) => !last.includes(n))), "reuse: 0 means no carry-over");
+}
+
+/* reuse interacts with required numbers (a required number in the last draw counts) */
+{
+  const last = [7, 9, 17, 21, 25, 28, 31];
+  const crit = defaultCriteria(lotto);
+  crit.requireNumbers = { enabled: true, numbers: [7] };
+  crit.reuseLast = { enabled: true, min: 1, max: 1, numbers: last };
+  const { tickets } = generateTickets(10, lotto, crit, buildHistoryIndex([], 0));
+  assert(tickets.length === 10, "reuse+require: generates 10");
+  assert(tickets.every((t) => t.mains.includes(7) && t.mains.filter((n) => last.includes(n)).length === 1),
+    "reuse+require: required last-draw number satisfies the single reuse slot");
+}
+
+/* infeasible reuse is reported */
+{
+  const crit = defaultCriteria(lotto);
+  crit.reuseLast = { enabled: true, min: 5, max: 6, numbers: [3, 9, 17] }; // only 3 available
+  const r = generateTickets(10, lotto, crit, buildHistoryIndex([], 0));
+  assert(r.tickets.length === 0 && r.warnings.some((w) => /Reuse from last draw/.test(w)), "reuse: infeasible min reported");
 }
 
 /* infeasible criteria are reported, not looped forever */
