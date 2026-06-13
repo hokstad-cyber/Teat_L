@@ -81,7 +81,10 @@
     "crit-sum", "crit-sum-min", "crit-sum-max",
     "crit-zone", "crit-zone-max", "crit-zone-min",
     "crit-parity", "crit-parity-value",
-    "crit-pattern", "crit-pattern-max",
+    "crit-arith", "crit-arith-value",
+    "ap-lastdigit", "ap-lastdigit-max",
+    "ap-multiple", "ap-multiple-max",
+    "ap-lowhigh", "ap-lowhigh-low", "ap-lowhigh-high",
     "crit-birthday",
     "bias-overdue", "bias-overdue-strength",
     "bias-cold", "bias-cold-strength", "bias-cold-years",
@@ -147,7 +150,14 @@
         minPerZone: intVal("crit-zone-min", 0)
       },
       parityRun: { enabled: $("#crit-parity").checked, value: intVal("crit-parity-value", 3) },
-      patternGuard: { enabled: $("#crit-pattern").checked, maxOccur: intVal("crit-pattern-max", 4) },
+      maxArithmetic: { enabled: $("#crit-arith").checked, value: intVal("crit-arith-value", 3) },
+      sameLastDigit: { enabled: $("#ap-lastdigit").checked, max: intVal("ap-lastdigit-max", 3) },
+      sharedMultiple: { enabled: $("#ap-multiple").checked, max: intVal("ap-multiple-max", 4) },
+      lowHigh: {
+        enabled: $("#ap-lowhigh").checked,
+        minLow: intVal("ap-lowhigh-low", 1),
+        minHigh: intVal("ap-lowhigh-high", 1)
+      },
       birthdayBias: { enabled: $("#crit-birthday").checked },
       excludeNumbers: {
         enabled: $("#crit-exclude").checked,
@@ -201,6 +211,15 @@
     if (intVal("crit-oddeven-min", 0) > cfg.mainPick) $("#crit-oddeven-min").value = Math.max(0, cfg.mainPick - 5);
     $("#hist-subset-size").max = cfg.mainPick;
     if (intVal("hist-subset-size", 4) > cfg.mainPick) $("#hist-subset-size").value = cfg.mainPick - 1;
+
+    // Anti-pattern bounds depend on how many numbers a row holds.
+    for (const id of ["crit-arith-value", "ap-lastdigit-max", "ap-multiple-max", "ap-lowhigh-low", "ap-lowhigh-high"]) {
+      $("#" + id).max = cfg.mainPick;
+    }
+    const halfLow = Math.ceil(cfg.mainMax / 2);
+    if (intVal("crit-arith-value", 3) > cfg.mainPick) $("#crit-arith-value").value = cfg.mainPick;
+    if (intVal("ap-lastdigit-max", 3) > cfg.mainPick) $("#ap-lastdigit-max").value = cfg.mainPick;
+    if (intVal("ap-multiple-max", 4) > cfg.mainPick) $("#ap-multiple-max").value = cfg.mainPick;
 
     // Reuse range spans 0..mainPick for this lottery.
     $("#reuse-min").max = cfg.mainPick;

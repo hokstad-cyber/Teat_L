@@ -35,8 +35,8 @@
     <aside class="sidebar">
 
       <section class="panel">
-        <h2><span class="panel-icon">⚙</span> Selection criteria</h2>
-        <p class="panel-hint">Toggle the rules each generated row must satisfy.</p>
+        <h2><span class="panel-icon">⚖️</span> Number balance</h2>
+        <p class="panel-hint">Shape how each generated row is distributed.</p>
 
         <div class="criterion">
           <label class="toggle">
@@ -103,20 +103,84 @@
             <p class="mini-hint">E.g. 3: a row like 3, 7, 11, 19, … (four odd numbers in a row) is rejected.</p>
           </div>
         </div>
+      </section>
+
+      <section class="panel">
+        <h2><span class="panel-icon">🛡️</span> Popular anti-patterns</h2>
+        <p class="panel-hint">Avoid the “obvious” combinations a lot of players pick — so a win is less likely to be shared.</p>
 
         <div class="criterion">
           <label class="toggle">
-            <input type="checkbox" id="crit-pattern" checked />
+            <input type="checkbox" id="crit-arith" checked />
             <span class="slider"></span>
-            <span class="toggle-label">Pattern guard</span>
+            <span class="toggle-label">Max arithmetic progression length</span>
           </label>
-          <div class="criterion-body" data-for="crit-pattern">
-            <label>Max occurrences of any single pattern
-              <input type="number" id="crit-pattern-max" min="2" max="10" value="4" />
+          <div class="criterion-body" data-for="crit-arith">
+            <label>Longest allowed equal-gap run (even non-adjacent)
+              <input type="number" id="crit-arith-value" min="2" max="10" value="3" />
             </label>
-            <p class="mini-hint">Rejects rows where more than this many numbers form an equal-gap progression (5, 10, 15, 20, 25), share the same final digit (7, 17, 27, …), or are multiples of the same small number (3, 5 or 7).</p>
+            <p class="mini-hint">E.g. 3 rejects 5, 10, 15, 20 — four numbers spaced evenly apart, anywhere in the row.</p>
           </div>
         </div>
+
+        <div class="criterion">
+          <label class="toggle">
+            <input type="checkbox" id="ap-lastdigit" checked />
+            <span class="slider"></span>
+            <span class="toggle-label">Limit same last digit</span>
+          </label>
+          <div class="criterion-body" data-for="ap-lastdigit">
+            <label>Max numbers ending in the same digit
+              <input type="number" id="ap-lastdigit-max" min="1" max="10" value="3" />
+            </label>
+            <p class="mini-hint">E.g. 3 rejects 4 numbers like 7, 17, 27, 37.</p>
+          </div>
+        </div>
+
+        <div class="criterion">
+          <label class="toggle">
+            <input type="checkbox" id="ap-multiple" checked />
+            <span class="slider"></span>
+            <span class="toggle-label">Limit multiples of one number</span>
+          </label>
+          <div class="criterion-body" data-for="ap-multiple">
+            <label>Max multiples of the same number (3, 5 or 7)
+              <input type="number" id="ap-multiple-max" min="1" max="10" value="4" />
+            </label>
+            <p class="mini-hint">E.g. 4 rejects 5 multiples of 7 like 7, 14, 21, 28, 35.</p>
+          </div>
+        </div>
+
+        <div class="criterion">
+          <label class="toggle">
+            <input type="checkbox" id="ap-lowhigh" />
+            <span class="slider"></span>
+            <span class="toggle-label">Low / high balance</span>
+          </label>
+          <div class="criterion-body two-col" data-for="ap-lowhigh">
+            <label>Min low half <input type="number" id="ap-lowhigh-low" min="0" value="1" /></label>
+            <label>Min high half <input type="number" id="ap-lowhigh-high" min="0" value="1" /></label>
+          </div>
+          <div class="criterion-body" data-for="ap-lowhigh">
+            <p class="mini-hint">Avoid all-low or all-high rows by requiring numbers from both halves of the range.</p>
+          </div>
+        </div>
+
+        <div class="criterion">
+          <label class="toggle">
+            <input type="checkbox" id="crit-birthday" />
+            <span class="slider"></span>
+            <span class="toggle-label">Avoid birthday bias</span>
+          </label>
+          <div class="criterion-body" data-for="crit-birthday">
+            <p class="mini-hint">Require at least one number above 31, since many players stick to calendar dates — fewer co-winners if you win.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2><span class="panel-icon">✨</span> Smart weighting</h2>
+        <p class="panel-hint">Bias the random picks toward certain numbers. Needs loaded history.</p>
 
         <div class="criterion">
           <label class="toggle">
@@ -131,7 +195,7 @@
                 <output id="bias-overdue-out">50&nbsp;%</output>
               </span>
             </label>
-            <p class="mini-hint">The longer a number has gone without being drawn (within your lookback window), the higher its chance of being suggested. Needs loaded history. Purely a style preference — the real odds never change.</p>
+            <p class="mini-hint">The longer a number has gone without being drawn (within your lookback window), the higher its chance of being suggested. Purely a style preference — the real odds never change.</p>
           </div>
         </div>
 
@@ -151,20 +215,14 @@
             <label>Count how often each number was drawn within the last (years)
               <input type="number" id="bias-cold-years" min="1" max="50" value="2" />
             </label>
-            <p class="mini-hint">Numbers drawn least often in the chosen period get a higher chance of being suggested. Needs loaded history covering that period.</p>
+            <p class="mini-hint">Numbers drawn least often in the chosen period get a higher chance of being suggested.</p>
           </div>
         </div>
+      </section>
 
-        <div class="criterion">
-          <label class="toggle">
-            <input type="checkbox" id="crit-birthday" />
-            <span class="slider"></span>
-            <span class="toggle-label">Avoid birthday bias</span>
-          </label>
-          <div class="criterion-body" data-for="crit-birthday">
-            <p class="mini-hint">Require at least one number above 31, since many players stick to dates — fewer co-winners if you win.</p>
-          </div>
-        </div>
+      <section class="panel">
+        <h2><span class="panel-icon">🎯</span> Your numbers</h2>
+        <p class="panel-hint">Personalise the rows and keep them distinct.</p>
 
         <div class="criterion">
           <label class="toggle">

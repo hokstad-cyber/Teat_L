@@ -177,7 +177,10 @@ function defaultCriteria(cfg) {
     sumRange: { enabled: true, min: cfg.defaultSumMin, max: cfg.defaultSumMax },
     zoneSpread: { enabled: true, maxPerZone: 3, minPerZone: 0 },
     parityRun: { enabled: true, value: 3 },
-    patternGuard: { enabled: true, maxOccur: 4 },
+    maxArithmetic: { enabled: true, value: 4 },
+    sameLastDigit: { enabled: true, max: 4 },
+    sharedMultiple: { enabled: true, max: 4 },
+    lowHigh: { enabled: false, minLow: 1, minHigh: 1 },
     birthdayBias: { enabled: false },
     excludeNumbers: { enabled: false, numbers: [] },
     requireNumbers: { enabled: false, numbers: [] },
@@ -301,6 +304,45 @@ for (const cfg of [lotto, euro]) {
     assert(t.mains.length === 7 && new Set(t.mains).size === 7, "bias: rows stay valid");
     if (!t.relaxed) assert(longestConsecutiveRun(t.mains) <= 2, "bias: criteria still enforced");
   }
+}
+
+/* max arithmetic progression length is configurable and enforced */
+{
+  const crit = defaultCriteria(lotto);
+  crit.maxArithmetic = { enabled: true, value: 2 }; // no 3-term equal-gap runs
+  // turn off other style constraints that could mask it
+  crit.sameLastDigit.enabled = false;
+  crit.sharedMultiple.enabled = false;
+  const { tickets } = generateTickets(10, lotto, crit, buildHistoryIndex([], 0));
+  assert(tickets.filter((t) => !t.relaxed).every((t) => longestArithmeticProgression(t.mains) <= 2),
+    "maxArithmetic: 3-term progressions rejected at value 2");
+  const bad = generateTickets(1, lotto, { ...crit, maxArithmetic: { enabled: true, value: 1 } }, buildHistoryIndex([], 0));
+  assert(bad.tickets.length === 0 && bad.warnings.some((w) => /arithmetic/i.test(w)), "maxArithmetic: value < 2 reported");
+}
+
+/* low/high balance forces both halves */
+{
+  const crit = defaultCriteria(lotto);
+  crit.lowHigh = { enabled: true, minLow: 2, minHigh: 2 };
+  const half = Math.ceil(lotto.mainMax / 2); // 17
+  const { tickets } = generateTickets(10, lotto, crit, buildHistoryIndex([], 0));
+  assert(tickets.length === 10, "lowHigh: generates 10");
+  for (const t of tickets) {
+    if (t.relaxed) continue;
+    const low = t.mains.filter((n) => n <= half).length;
+    assert(low >= 2 && t.mains.length - low >= 2, "lowHigh: at least 2 from each half");
+  }
+  const infeasible = generateTickets(10, lotto, { ...crit, lowHigh: { enabled: true, minLow: 4, minHigh: 4 } }, buildHistoryIndex([], 0));
+  assert(infeasible.tickets.length === 0 && infeasible.warnings.some((w) => /Low\/high/.test(w)), "lowHigh: 4+4 > 7 reported");
+}
+
+/* same-last-digit limit is enforced */
+{
+  const crit = defaultCriteria(lotto);
+  crit.sameLastDigit = { enabled: true, max: 2 };
+  const { tickets } = generateTickets(10, lotto, crit, buildHistoryIndex([], 0));
+  assert(tickets.filter((t) => !t.relaxed).every((t) => maxSameLastDigit(t.mains) <= 2),
+    "sameLastDigit: max 2 enforced");
 }
 
 /* reuse-from-last-draw: exact count */

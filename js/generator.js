@@ -8,8 +8,10 @@
  *   sumRange:      { enabled, min, max }
  *   zoneSpread:    { enabled, maxPerZone, minPerZone }
  *   parityRun:     { enabled, value }   // longest allowed odd-or-even streak
- *   patternGuard:  { enabled, maxOccur } // equal-gap progressions, same last
- *                                        // digit, multiples of same divisor
+ *   maxArithmetic: { enabled, value }   // longest allowed equal-gap progression
+ *   sameLastDigit: { enabled, max }     // max numbers sharing a final digit
+ *   sharedMultiple:{ enabled, max }     // max multiples of one of 3 / 5 / 7
+ *   lowHigh:       { enabled, minLow, minHigh } // balance low vs high half
  *   birthdayBias:  { enabled }          // require at least one number > 31
  *   excludeNumbers:{ enabled, numbers: number[] }
  *   requireNumbers:{ enabled, numbers: number[] }
@@ -63,8 +65,22 @@ function validateCriteriaFeasibility(cfg, criteria) {
       }
     }
   }
-  if (criteria.patternGuard.enabled && criteria.patternGuard.maxOccur < 2) {
-    problems.push("Pattern guard: the threshold must be at least 2 (any two numbers form an equal-gap pair).");
+  if (criteria.maxArithmetic && criteria.maxArithmetic.enabled && criteria.maxArithmetic.value < 2) {
+    problems.push("Max arithmetic progression: the length must be at least 2 (any two numbers form a 2-term progression).");
+  }
+  if (criteria.sameLastDigit && criteria.sameLastDigit.enabled && criteria.sameLastDigit.max < 1) {
+    problems.push("Same last digit: the maximum must be at least 1.");
+  }
+  if (criteria.lowHigh && criteria.lowHigh.enabled) {
+    const half = Math.ceil(cfg.mainMax / 2);
+    const lowSize = half;
+    const highSize = cfg.mainMax - half;
+    const { minLow, minHigh } = criteria.lowHigh;
+    if (minLow + minHigh > cfg.mainPick) {
+      problems.push(`Low/high balance: needs ${minLow + minHigh} numbers, but a row only has ${cfg.mainPick}.`);
+    }
+    if (minLow > lowSize) problems.push(`Low/high balance: the low half (1–${lowSize}) cannot supply ${minLow} numbers.`);
+    if (minHigh > highSize) problems.push(`Low/high balance: the high half (${half + 1}–${cfg.mainMax}) cannot supply ${minHigh} numbers.`);
   }
   if (criteria.birthdayBias.enabled && cfg.mainMax <= 31) {
     problems.push("Birthday-bias criterion needs numbers above 31, which this lottery does not have.");
@@ -119,11 +135,20 @@ function rowPassesCriteria(mains, cfg, criteria, historyIndex, previousRows, rel
 
   if (criteria.parityRun.enabled && !relaxed && longestParityRun(mains) > criteria.parityRun.value) return false;
 
-  if (criteria.patternGuard.enabled && !relaxed) {
-    const limit = criteria.patternGuard.maxOccur;
-    if (longestArithmeticProgression(mains) > limit) return false;
-    if (maxSameLastDigit(mains) > limit) return false;
-    if (maxSharedDivisor(mains) > limit) return false;
+  if (criteria.maxArithmetic && criteria.maxArithmetic.enabled && !relaxed &&
+      longestArithmeticProgression(mains) > criteria.maxArithmetic.value) return false;
+
+  if (criteria.sameLastDigit && criteria.sameLastDigit.enabled && !relaxed &&
+      maxSameLastDigit(mains) > criteria.sameLastDigit.max) return false;
+
+  if (criteria.sharedMultiple && criteria.sharedMultiple.enabled && !relaxed &&
+      maxSharedDivisor(mains) > criteria.sharedMultiple.max) return false;
+
+  if (criteria.lowHigh && criteria.lowHigh.enabled && !relaxed) {
+    const half = Math.ceil(cfg.mainMax / 2);
+    let low = 0;
+    for (const n of mains) if (n <= half) low++;
+    if (low < criteria.lowHigh.minLow || mains.length - low < criteria.lowHigh.minHigh) return false;
   }
 
   if (criteria.birthdayBias.enabled && !relaxed) {
@@ -246,7 +271,7 @@ function generateTickets(count, cfg, criteria, historyIndex, weights) {
       break;
     }
     if (relaxed) {
-      warnings.push(`Row ${t + 1}: style criteria (sum/odd-even/sequences/zones/patterns) were relaxed to satisfy the exclusion rules.`);
+      warnings.push(`Row ${t + 1}: style criteria (balance, spread and anti-patterns) were relaxed to satisfy the exclusion rules.`);
     }
     tickets.push(ticket);
     previousRows.push(ticket.mains);

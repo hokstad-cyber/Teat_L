@@ -65,13 +65,20 @@ reuse counts generate instantly.
 | Sum within range | Keeps each row's sum inside a configurable band (defaults per lottery) |
 | Spread across number zones | Between *min* and *max* numbers per zone of ten (1–10, 11–20, …); a minimum above 0 forces every zone to be represented |
 | Limit odd/even streaks | Rejects rows containing more than *N* consecutive only-odd or only-even numbers (e.g. 3, 7, 11, 19) |
-| Pattern guard | Rejects rows where more than *N* (default 4) numbers form an equal-gap progression (5, 10, 15, 20, 25), share the same final digit (7, 17, 27, …), or are multiples of the same small number (3, 5 or 7) |
+| **Max arithmetic progression length** | Rejects rows whose numbers contain an equal-gap run longer than *N* — even non-adjacent, so 5, 10, 15, 20 hiding in a row is caught |
+| Limit same last digit | Rejects rows with more than *N* numbers ending in the same digit (7, 17, 27, 37) |
+| Limit multiples of one number | Rejects rows with more than *N* multiples of the same small number (3, 5 or 7) |
+| Low / high balance | Requires at least *minLow* numbers from the low half and *minHigh* from the high half — no all-low or all-high rows |
+| Avoid birthday bias | Requires at least one number above 31 (fewer co-winners if you win) |
 | Favour overdue numbers (slider) | Raises the sampling weight of numbers that have gone longest without being drawn within the lookback window — up to 9× at 100 % |
 | Favour rarely-picked numbers (slider) | Raises the sampling weight of the numbers drawn least often within a user-chosen period (in years) — up to 9× at 100 % |
-| Avoid birthday bias | Requires at least one number above 31 (fewer co-winners if you win) |
 | Limit overlap between rows | No two of your 10 rows share more than *N* numbers |
 | Exclude specific numbers | Numbers that must never be picked |
 | Always include lucky numbers | Numbers forced into every row |
+
+The criteria are grouped into clearly labelled panels — **Number balance**, **Popular
+anti-patterns**, **Smart weighting**, **Your numbers** and **Historical draws** — each a
+toggle plus its own settings.
 
 The two sliders are sampling *biases* rather than filters: they use weighted
 sampling without replacement, so boosted numbers become more likely to be
