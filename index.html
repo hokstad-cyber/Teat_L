@@ -366,12 +366,27 @@
         <div id="lastdraw-balls" class="lastdraw-balls"></div>
 
         <div id="lastdraw-editor" class="lastdraw-editor" hidden>
-          <label for="lastdraw-input">Enter the most recent winning numbers</label>
-          <input type="text" id="lastdraw-input" placeholder="e.g. 3 9 17 21 25 28 31" />
+          <div class="editor-tabs" role="tablist">
+            <button type="button" class="editor-tab active" id="lastdraw-tab-history" data-mode="history" role="tab">From loaded results (by date)</button>
+            <button type="button" class="editor-tab" id="lastdraw-tab-manual" data-mode="manual" role="tab">Enter manually</button>
+          </div>
+
+          <div class="editor-pane" id="lastdraw-pane-history">
+            <label for="lastdraw-date">Choose a draw date from your loaded results</label>
+            <select id="lastdraw-date"></select>
+            <p class="mini-hint" id="lastdraw-date-hint"></p>
+          </div>
+
+          <div class="editor-pane" id="lastdraw-pane-manual" hidden>
+            <label for="lastdraw-input">Enter the winning numbers</label>
+            <input type="text" id="lastdraw-input" placeholder="e.g. 3 9 17 21 25 28 31" />
+            <p class="mini-hint" id="lastdraw-manual-hint"></p>
+          </div>
+
           <div class="btn-row">
-            <button id="lastdraw-save" class="btn small primary">Save last draw</button>
+            <button id="lastdraw-save" class="btn small primary">Use these numbers</button>
             <button id="lastdraw-cancel" class="btn small ghost">Cancel</button>
-            <button id="lastdraw-reset" class="btn small">Use newest from history</button>
+            <button id="lastdraw-reset" class="btn small">Reset to newest result</button>
           </div>
         </div>
 

@@ -68,7 +68,12 @@
       for (const id of Object.keys(state.lastDrawOverride)) {
         const o = data.lastDrawOverride[id];
         if (o && Array.isArray(o.mains)) {
-          state.lastDrawOverride[id] = { mains: o.mains, stars: Array.isArray(o.stars) ? o.stars : [] };
+          state.lastDrawOverride[id] = {
+            mains: o.mains,
+            stars: Array.isArray(o.stars) ? o.stars : [],
+            manual: !!o.manual,
+            date: typeof o.date === "string" ? o.date : undefined
+          };
         }
       }
     }
@@ -288,21 +293,29 @@
   function refreshLastDraw() {
     const id = state.lotteryId;
     const override = state.lastDrawOverride[id];
-    const draw = override
-      ? { date: null, mains: override.mains.slice(), stars: (override.stars || []).slice(), manual: true }
-      : newestHistoryDraw();
+    let draw;
+    if (override) {
+      draw = {
+        date: override.date ? new Date(override.date) : null,
+        mains: override.mains.slice(),
+        stars: (override.stars || []).slice(),
+        source: override.manual ? "manual" : "picked"
+      };
+    } else {
+      draw = newestHistoryDraw();
+      if (draw) draw = { ...draw, source: "newest" };
+    }
     state.lastDraw = draw;
     state.lastDrawSet = new Set(draw ? draw.mains : []);
     renderLastDraw();
   }
 
   function renderLastDraw() {
-    const cfg = LOTTERIES[state.lotteryId];
     const draw = state.lastDraw;
     const ballsWrap = $("#lastdraw-balls");
     const meta = $("#lastdraw-meta");
     if (!draw) {
-      ballsWrap.innerHTML = '<span class="empty-note">No last draw yet — load history or press Edit to enter one.</span>';
+      ballsWrap.innerHTML = '<span class="empty-note">No last draw yet — press Edit to pick a date from loaded results or enter numbers manually.</span>';
       meta.textContent = "No last draw set.";
       return;
     }
@@ -311,29 +324,103 @@
       ? '<span class="star-sep">+</span>' + draw.stars.map((n) => `<span class="ball star">${n}</span>`).join("")
       : "";
     ballsWrap.innerHTML = mainBalls + starBalls;
-    if (draw.manual) {
+    const fmt = draw.date
+      ? draw.date.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })
+      : null;
+    if (draw.source === "manual") {
       meta.textContent = "Entered manually.";
+    } else if (draw.source === "picked") {
+      meta.textContent = `Selected result${fmt ? ` — ${fmt}` : ""}.`;
     } else {
-      const fmt = draw.date.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
-      meta.textContent = `Newest draw in your history — ${fmt}.`;
+      meta.textContent = `Newest result in your history${fmt ? ` — ${fmt}` : ""}.`;
+    }
+  }
+
+  /** Dated draws from the loaded results, newest first. */
+  function datedHistory() {
+    return state.history[state.lotteryId]
+      .filter((d) => d.date)
+      .slice()
+      .sort((a, b) => b.date.getTime() - a.date.getTime());
+  }
+
+  /** Fill the date dropdown from the loaded results (each option carries the
+      draw's numbers so picking a date loads that exact draw). */
+  function populateLastDrawDates() {
+    const cfg = LOTTERIES[state.lotteryId];
+    const select = $("#lastdraw-date");
+    const dated = datedHistory();
+    select.innerHTML = "";
+    if (!dated.length) {
+      const opt = document.createElement("option");
+      opt.value = "";
+      opt.textContent = "No dated results loaded";
+      select.appendChild(opt);
+      select.disabled = true;
+      $("#lastdraw-date-hint").textContent = "Load results first (Crawl, paste, or import a CSV/JSON), then pick a date here.";
+      return;
+    }
+    select.disabled = false;
+    dated.forEach((d, i) => {
+      const opt = document.createElement("option");
+      opt.value = String(i);
+      const fmt = d.date.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
+      const stars = d.stars && d.stars.length ? "  + " + d.stars.join(" ") : "";
+      opt.textContent = `${fmt}${i === 0 ? "  (latest)" : ""} — ${d.mains.join(" ")}${stars}`;
+      select.appendChild(opt);
+    });
+    select.value = "0";
+    $("#lastdraw-date-hint").textContent = `${dated.length} dated result${dated.length === 1 ? "" : "s"} available — the latest is preselected.`;
+  }
+
+  function setEditorMode(mode) {
+    const history = mode === "history";
+    $("#lastdraw-tab-history").classList.toggle("active", history);
+    $("#lastdraw-tab-manual").classList.toggle("active", !history);
+    $("#lastdraw-pane-history").hidden = !history;
+    $("#lastdraw-pane-manual").hidden = history;
+    if (history) {
+      $("#lastdraw-date").focus();
+    } else {
+      $("#lastdraw-input").focus();
     }
   }
 
   function openLastDrawEditor() {
+    const cfg = LOTTERIES[state.lotteryId];
     const draw = state.lastDraw;
     $("#lastdraw-input").value = draw ? draw.mains.join(" ") + (draw.stars && draw.stars.length ? " + " + draw.stars.join(" ") : "") : "";
+    $("#lastdraw-manual-hint").textContent = `Enter ${cfg.mainPick} numbers from 1–${cfg.mainMax}${cfg.starPick ? `, then a + and ${cfg.starPick} star numbers from 1–${cfg.starMax}` : ""}.`;
+    populateLastDrawDates();
+    // Default to the history picker when results are loaded, else manual entry.
+    setEditorMode(datedHistory().length ? "history" : "manual");
     $("#lastdraw-editor").hidden = false;
-    $("#lastdraw-input").focus();
   }
 
   function saveLastDraw() {
     const cfg = LOTTERIES[state.lotteryId];
-    const parsed = parseDrawLine($("#lastdraw-input").value, cfg);
-    if (!parsed) {
-      setHistoryStatus(`That does not look like a valid ${cfg.name} draw — enter ${cfg.mainPick} numbers from 1–${cfg.mainMax}${cfg.starPick ? ` and ${cfg.starPick} star numbers from 1–${cfg.starMax}` : ""}.`, false);
-      return;
+    const manualMode = !$("#lastdraw-pane-manual").hidden;
+    if (manualMode) {
+      const parsed = parseDrawLine($("#lastdraw-input").value, cfg);
+      if (!parsed) {
+        setHistoryStatus(`That does not look like a valid ${cfg.name} draw — enter ${cfg.mainPick} numbers from 1–${cfg.mainMax}${cfg.starPick ? ` and ${cfg.starPick} star numbers from 1–${cfg.starMax}` : ""}.`, false);
+        return;
+      }
+      state.lastDrawOverride[state.lotteryId] = { mains: parsed.mains, stars: parsed.stars, manual: true };
+    } else {
+      const dated = datedHistory();
+      const idx = parseInt($("#lastdraw-date").value, 10);
+      if (!dated.length || !Number.isInteger(idx) || !dated[idx]) {
+        setHistoryStatus("No dated result selected — load results or switch to manual entry.", false);
+        return;
+      }
+      const d = dated[idx];
+      // Picking the latest reverts to the auto-derived last draw; any older
+      // date is stored as an explicit override (with its date for the label).
+      state.lastDrawOverride[state.lotteryId] = idx === 0
+        ? null
+        : { mains: d.mains.slice(), stars: (d.stars || []).slice(), date: d.date.toISOString().slice(0, 10) };
     }
-    state.lastDrawOverride[state.lotteryId] = { mains: parsed.mains, stars: parsed.stars };
     $("#lastdraw-editor").hidden = true;
     refreshLastDraw();
     saveState();
@@ -694,6 +781,11 @@
     $("#lastdraw-save").addEventListener("click", saveLastDraw);
     $("#lastdraw-cancel").addEventListener("click", () => ($("#lastdraw-editor").hidden = true));
     $("#lastdraw-reset").addEventListener("click", resetLastDraw);
+    $("#lastdraw-tab-history").addEventListener("click", () => setEditorMode("history"));
+    $("#lastdraw-tab-manual").addEventListener("click", () => setEditorMode("manual"));
+    $("#lastdraw-date").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") saveLastDraw();
+    });
     $("#lastdraw-input").addEventListener("keydown", (e) => {
       if (e.key === "Enter") saveLastDraw();
     });

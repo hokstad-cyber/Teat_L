@@ -48,8 +48,10 @@ History controls:
 A statistics panel shows per-number frequency and hot/cold numbers for the active window.
 
 ### Last draw & reuse
-A highlighted **Last draw** card (gold-ringed balls) shows the most recent draw — the
-newest dated row in your history, or one you type in yourself via **Edit**. A dual-thumb
+A highlighted **Last draw** card (gold-ringed balls) shows the most recent draw — by
+default the newest dated row in your loaded results. **Edit** opens a two-mode chooser:
+**From loaded results (by date)** picks any draw from your crawled/imported CSV by its
+date (latest preselected), or **Enter manually** lets you type the numbers in. A dual-thumb
 **reuse** slider then lets each generated row carry over a chosen *range* of numbers from
 that last draw — e.g. exactly 0, 0–1, 0–2, 1–3, … up to all of them. The carried-over
 numbers are highlighted in gold in every generated row, with a `↻ N` badge showing how

@@ -321,9 +321,16 @@ body[data-lottery="eurojackpot"] .btn.primary { color: #2a1c00; }
 .lastdraw-balls .empty-note { color: var(--text-dim); font-size: 0.85rem; }
 .lastdraw-balls .ball { box-shadow: 0 0 0 2px var(--gold), 0 3px 8px rgba(0, 0, 0, 0.35); }
 
-.lastdraw-editor { margin: 0.9rem 0 0.2rem; }
-.lastdraw-editor label { display: block; font-size: 0.8rem; color: var(--text-dim); margin-bottom: 0.3rem; }
-.lastdraw-editor input[type="text"] {
+.lastdraw-editor {
+  margin: 0.9rem 0 0.2rem;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid var(--panel-edge);
+  border-radius: var(--radius-sm);
+  padding: 0.9rem;
+}
+.lastdraw-editor label { display: block; font-size: 0.8rem; color: var(--text-dim); margin-bottom: 0.35rem; }
+.lastdraw-editor input[type="text"],
+.lastdraw-editor select {
   width: 100%;
   background: var(--bg-soft);
   border: 1px solid var(--panel-edge);
@@ -331,8 +338,38 @@ body[data-lottery="eurojackpot"] .btn.primary { color: #2a1c00; }
   color: var(--text);
   padding: 0.5rem 0.6rem;
   font: inherit;
-  margin-bottom: 0.6rem;
 }
+.lastdraw-editor select { cursor: pointer; }
+
+.editor-tabs {
+  display: flex;
+  gap: 0.3rem;
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: 9px;
+  padding: 0.25rem;
+  margin-bottom: 0.9rem;
+}
+.editor-tab {
+  flex: 1;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-weight: 700;
+  font-size: 0.78rem;
+  padding: 0.45rem 0.5rem;
+  border-radius: 7px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.editor-tab:hover { color: var(--text); }
+.editor-tab.active {
+  background: linear-gradient(140deg, var(--accent), var(--accent-2));
+  color: #fff;
+}
+body[data-lottery="eurojackpot"] .editor-tab.active { color: #2a1c00; }
+.editor-pane { margin-bottom: 0.8rem; }
+.editor-pane[hidden] { display: none; }
 
 .reuse-control { border-top: 1px solid var(--panel-edge); margin-top: 1rem; padding-top: 0.9rem; }
 .reuse-body { margin: 0.8rem 0 0.2rem; display: none; }
