@@ -35,8 +35,8 @@
     <aside class="sidebar">
 
       <section class="panel">
-        <h2><span class="panel-icon">⚙</span> Selection criteria</h2>
-        <p class="panel-hint">Toggle the rules each generated row must satisfy.</p>
+        <h2><span class="panel-icon">⚖️</span> Number balance</h2>
+        <p class="panel-hint">Shape how each generated row is distributed.</p>
 
         <div class="criterion">
           <label class="toggle">
@@ -81,10 +81,88 @@
             <span class="slider"></span>
             <span class="toggle-label">Spread across number zones</span>
           </label>
+          <div class="criterion-body two-col" data-for="crit-zone">
+            <label>Max per zone <input type="number" id="crit-zone-max" min="1" max="10" value="3" /></label>
+            <label>Min per zone <input type="number" id="crit-zone-min" min="0" max="10" value="0" /></label>
+          </div>
           <div class="criterion-body" data-for="crit-zone">
-            <label>Max numbers per zone of ten (1–10, 11–20, …)
-              <input type="number" id="crit-zone-max" min="1" max="10" value="3" />
+            <p class="mini-hint">Zones of ten: 1–10, 11–20, … A minimum above 0 forces every zone to be represented.</p>
+          </div>
+        </div>
+
+        <div class="criterion">
+          <label class="toggle">
+            <input type="checkbox" id="crit-parity" checked />
+            <span class="slider"></span>
+            <span class="toggle-label">Limit odd/even streaks</span>
+          </label>
+          <div class="criterion-body" data-for="crit-parity">
+            <label>Longest allowed run of only-odd or only-even numbers
+              <input type="number" id="crit-parity-value" min="1" max="10" value="3" />
             </label>
+            <p class="mini-hint">E.g. 3: a row like 3, 7, 11, 19, … (four odd numbers in a row) is rejected.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2><span class="panel-icon">🛡️</span> Popular anti-patterns</h2>
+        <p class="panel-hint">Avoid the “obvious” combinations a lot of players pick — so a win is less likely to be shared.</p>
+
+        <div class="criterion">
+          <label class="toggle">
+            <input type="checkbox" id="crit-arith" checked />
+            <span class="slider"></span>
+            <span class="toggle-label">Max arithmetic progression length</span>
+          </label>
+          <div class="criterion-body" data-for="crit-arith">
+            <label>Longest allowed equal-gap run (even non-adjacent)
+              <input type="number" id="crit-arith-value" min="2" max="10" value="3" />
+            </label>
+            <p class="mini-hint">E.g. 3 rejects 5, 10, 15, 20 — four numbers spaced evenly apart, anywhere in the row.</p>
+          </div>
+        </div>
+
+        <div class="criterion">
+          <label class="toggle">
+            <input type="checkbox" id="ap-lastdigit" checked />
+            <span class="slider"></span>
+            <span class="toggle-label">Limit same last digit</span>
+          </label>
+          <div class="criterion-body" data-for="ap-lastdigit">
+            <label>Max numbers ending in the same digit
+              <input type="number" id="ap-lastdigit-max" min="1" max="10" value="3" />
+            </label>
+            <p class="mini-hint">E.g. 3 rejects 4 numbers like 7, 17, 27, 37.</p>
+          </div>
+        </div>
+
+        <div class="criterion">
+          <label class="toggle">
+            <input type="checkbox" id="ap-multiple" checked />
+            <span class="slider"></span>
+            <span class="toggle-label">Limit multiples of one number</span>
+          </label>
+          <div class="criterion-body" data-for="ap-multiple">
+            <label>Max multiples of the same number (3, 5 or 7)
+              <input type="number" id="ap-multiple-max" min="1" max="10" value="4" />
+            </label>
+            <p class="mini-hint">E.g. 4 rejects 5 multiples of 7 like 7, 14, 21, 28, 35.</p>
+          </div>
+        </div>
+
+        <div class="criterion">
+          <label class="toggle">
+            <input type="checkbox" id="ap-lowhigh" />
+            <span class="slider"></span>
+            <span class="toggle-label">Low / high balance</span>
+          </label>
+          <div class="criterion-body two-col" data-for="ap-lowhigh">
+            <label>Min low half <input type="number" id="ap-lowhigh-low" min="0" value="1" /></label>
+            <label>Min high half <input type="number" id="ap-lowhigh-high" min="0" value="1" /></label>
+          </div>
+          <div class="criterion-body" data-for="ap-lowhigh">
+            <p class="mini-hint">Avoid all-low or all-high rows by requiring numbers from both halves of the range.</p>
           </div>
         </div>
 
@@ -95,9 +173,56 @@
             <span class="toggle-label">Avoid birthday bias</span>
           </label>
           <div class="criterion-body" data-for="crit-birthday">
-            <p class="mini-hint">Require at least one number above 31, since many players stick to dates — fewer co-winners if you win.</p>
+            <p class="mini-hint">Require at least one number above 31, since many players stick to calendar dates — fewer co-winners if you win.</p>
           </div>
         </div>
+      </section>
+
+      <section class="panel">
+        <h2><span class="panel-icon">✨</span> Smart weighting</h2>
+        <p class="panel-hint">Bias the random picks toward certain numbers. Needs loaded history.</p>
+
+        <div class="criterion">
+          <label class="toggle">
+            <input type="checkbox" id="bias-overdue" />
+            <span class="slider"></span>
+            <span class="toggle-label">Favour overdue numbers</span>
+          </label>
+          <div class="criterion-body" data-for="bias-overdue">
+            <label>Boost for numbers not picked lately
+              <span class="range-row">
+                <input type="range" id="bias-overdue-strength" min="0" max="100" value="50" />
+                <output id="bias-overdue-out">50&nbsp;%</output>
+              </span>
+            </label>
+            <p class="mini-hint">The longer a number has gone without being drawn (within your lookback window), the higher its chance of being suggested. Purely a style preference — the real odds never change.</p>
+          </div>
+        </div>
+
+        <div class="criterion">
+          <label class="toggle">
+            <input type="checkbox" id="bias-cold" />
+            <span class="slider"></span>
+            <span class="toggle-label">Favour rarely-picked numbers</span>
+          </label>
+          <div class="criterion-body" data-for="bias-cold">
+            <label>Boost for the least-drawn numbers
+              <span class="range-row">
+                <input type="range" id="bias-cold-strength" min="0" max="100" value="50" />
+                <output id="bias-cold-out">50&nbsp;%</output>
+              </span>
+            </label>
+            <label>Count how often each number was drawn within the last (years)
+              <input type="number" id="bias-cold-years" min="1" max="50" value="2" />
+            </label>
+            <p class="mini-hint">Numbers drawn least often in the chosen period get a higher chance of being suggested.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2><span class="panel-icon">🎯</span> Your numbers</h2>
+        <p class="panel-hint">Personalise the rows and keep them distinct.</p>
 
         <div class="criterion">
           <label class="toggle">
@@ -144,14 +269,10 @@
         <p class="panel-hint">Load previous winning numbers and avoid repeating history.</p>
 
         <div class="history-load">
-          <label>Source page / API URL
-            <div class="url-row">
-              <input type="text" id="history-url" placeholder="https://…" />
-              <button id="history-fetch" class="btn small">Fetch</button>
-            </div>
-          </label>
-          <div id="history-presets" class="preset-links"></div>
-          <p class="mini-hint">Lottery sites often block direct fetching from a browser app (CORS). If fetching fails, open the results page yourself, copy the draws, and paste them below — or import a downloaded CSV/JSON file.</p>
+          <div class="btn-row" style="margin-bottom: 0.8rem;">
+            <button id="history-crawl" class="btn small primary">⛏ Crawl 2020–2026 results</button>
+          </div>
+          <p class="mini-hint" style="margin: 0 0 0.9rem;">Crawls the Norsk Tipping results for the current lottery (norsk-tipping.no/lotteri/…/resultater and its draw API), keeps the draws from 2020–2026, downloads them as a CSV file with the date on every row, and loads them straight into the app. The site may block browser requests (CORS) — backup mirrors are tried automatically. You can also paste draws or import a CSV/JSON file below.</p>
 
           <label>Paste draws (one per line, e.g. <code>16.03.2024 1 5 12 19 23 28 31</code>)
             <textarea id="history-paste" rows="3" placeholder="date  n1 n2 n3 …"></textarea>
@@ -209,6 +330,7 @@
         <div class="hotcold">
           <div><strong>Hot:</strong> <span id="hot-numbers"></span></div>
           <div><strong>Cold:</strong> <span id="cold-numbers"></span></div>
+          <div><strong>Overdue:</strong> <span id="overdue-numbers"></span></div>
         </div>
       </section>
 
@@ -228,6 +350,62 @@
           <button id="btn-print" class="btn" disabled>Print</button>
         </div>
       </div>
+
+      <section class="lastdraw-card" id="lastdraw-card">
+        <div class="lastdraw-top">
+          <div class="lastdraw-title">
+            <span class="lastdraw-star" aria-hidden="true">★</span>
+            <div>
+              <h2>Last draw</h2>
+              <p class="lastdraw-meta" id="lastdraw-meta">No last draw set.</p>
+            </div>
+          </div>
+          <button id="lastdraw-edit" class="btn small ghost">Edit</button>
+        </div>
+
+        <div id="lastdraw-balls" class="lastdraw-balls"></div>
+
+        <div id="lastdraw-editor" class="lastdraw-editor" hidden>
+          <div class="editor-tabs" role="tablist">
+            <button type="button" class="editor-tab active" id="lastdraw-tab-history" data-mode="history" role="tab">From loaded results (by date)</button>
+            <button type="button" class="editor-tab" id="lastdraw-tab-manual" data-mode="manual" role="tab">Enter manually</button>
+          </div>
+
+          <div class="editor-pane" id="lastdraw-pane-history">
+            <label for="lastdraw-date">Choose a draw date from your loaded results</label>
+            <select id="lastdraw-date"></select>
+            <p class="mini-hint" id="lastdraw-date-hint"></p>
+          </div>
+
+          <div class="editor-pane" id="lastdraw-pane-manual" hidden>
+            <label for="lastdraw-input">Enter the winning numbers</label>
+            <input type="text" id="lastdraw-input" placeholder="e.g. 3 9 17 21 25 28 31" />
+            <p class="mini-hint" id="lastdraw-manual-hint"></p>
+          </div>
+
+          <div class="btn-row">
+            <button id="lastdraw-save" class="btn small primary">Use these numbers</button>
+            <button id="lastdraw-cancel" class="btn small ghost">Cancel</button>
+            <button id="lastdraw-reset" class="btn small">Reset to newest result</button>
+          </div>
+        </div>
+
+        <div class="reuse-control">
+          <label class="toggle">
+            <input type="checkbox" id="reuse-enabled" />
+            <span class="slider"></span>
+            <span class="toggle-label">Reuse numbers from the last draw</span>
+          </label>
+          <div class="reuse-body" id="reuse-body">
+            <div class="dual-range" id="reuse-range">
+              <div class="dual-track"><div class="dual-fill" id="reuse-fill"></div></div>
+              <input type="range" id="reuse-min" min="0" max="7" value="0" />
+              <input type="range" id="reuse-max" min="0" max="7" value="2" />
+            </div>
+            <p class="reuse-summary" id="reuse-summary">Carry over <strong>0–2</strong> of these numbers into each generated row.</p>
+          </div>
+        </div>
+      </section>
 
       <div id="warnings" class="warnings" hidden></div>
 
@@ -252,6 +430,7 @@
   <script src="js/lotteries.js"></script>
   <script src="js/util.js"></script>
   <script src="js/history.js"></script>
+  <script src="js/crawler.js"></script>
   <script src="js/generator.js"></script>
   <script src="js/app.js"></script>
 </body>

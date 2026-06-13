@@ -6,13 +6,20 @@
  *   maxRun:        { enabled, value }   // longest allowed consecutive run
  *   oddEven:       { enabled, minOdd, maxOdd }
  *   sumRange:      { enabled, min, max }
- *   zoneSpread:    { enabled, maxPerZone }
+ *   zoneSpread:    { enabled, maxPerZone, minPerZone }
+ *   parityRun:     { enabled, value }   // longest allowed odd-or-even streak
+ *   maxArithmetic: { enabled, value }   // longest allowed equal-gap progression
+ *   sameLastDigit: { enabled, max }     // max numbers sharing a final digit
+ *   sharedMultiple:{ enabled, max }     // max multiples of one of 3 / 5 / 7
+ *   lowHigh:       { enabled, minLow, minHigh } // balance low vs high half
  *   birthdayBias:  { enabled }          // require at least one number > 31
  *   excludeNumbers:{ enabled, numbers: number[] }
  *   requireNumbers:{ enabled, numbers: number[] }
  *   batchOverlap:  { enabled, maxShared }  // vs already generated rows
  *   historyExact:  { enabled }
  *   historySubset: { enabled }          // uses historyIndex.subsetKeys
+ *   reuseLast:     { enabled, min, max, numbers: number[] } // carry over
+ *                  // between min and max numbers from the last draw
  * }
  */
 
@@ -41,12 +48,62 @@ function validateCriteriaFeasibility(cfg, criteria) {
   }
   if (criteria.zoneSpread.enabled) {
     const zones = lotteryZoneCount(cfg);
+    const min = criteria.zoneSpread.minPerZone || 0;
     if (zones * criteria.zoneSpread.maxPerZone < cfg.mainPick) {
       problems.push(`Zone spread: max ${criteria.zoneSpread.maxPerZone} per zone × ${zones} zones cannot hold ${cfg.mainPick} numbers.`);
     }
+    if (min > criteria.zoneSpread.maxPerZone) {
+      problems.push("Zone spread: minimum per zone is greater than maximum per zone.");
+    }
+    if (min * zones > cfg.mainPick) {
+      problems.push(`Zone spread: min ${min} per zone × ${zones} zones needs ${min * zones} numbers, but a row only has ${cfg.mainPick}.`);
+    }
+    for (let z = 0; z < zones; z++) {
+      const zoneSize = Math.min(cfg.zoneSize, cfg.mainMax - z * cfg.zoneSize);
+      if (min > zoneSize) {
+        problems.push(`Zone spread: zone ${z * cfg.zoneSize + 1}–${z * cfg.zoneSize + zoneSize} only has ${zoneSize} numbers, fewer than the minimum of ${min}.`);
+      }
+    }
+  }
+  if (criteria.maxArithmetic && criteria.maxArithmetic.enabled && criteria.maxArithmetic.value < 2) {
+    problems.push("Max arithmetic progression: the length must be at least 2 (any two numbers form a 2-term progression).");
+  }
+  if (criteria.sameLastDigit && criteria.sameLastDigit.enabled && criteria.sameLastDigit.max < 1) {
+    problems.push("Same last digit: the maximum must be at least 1.");
+  }
+  if (criteria.lowHigh && criteria.lowHigh.enabled) {
+    const half = Math.ceil(cfg.mainMax / 2);
+    const lowSize = half;
+    const highSize = cfg.mainMax - half;
+    const { minLow, minHigh } = criteria.lowHigh;
+    if (minLow + minHigh > cfg.mainPick) {
+      problems.push(`Low/high balance: needs ${minLow + minHigh} numbers, but a row only has ${cfg.mainPick}.`);
+    }
+    if (minLow > lowSize) problems.push(`Low/high balance: the low half (1–${lowSize}) cannot supply ${minLow} numbers.`);
+    if (minHigh > highSize) problems.push(`Low/high balance: the high half (${half + 1}–${cfg.mainMax}) cannot supply ${minHigh} numbers.`);
   }
   if (criteria.birthdayBias.enabled && cfg.mainMax <= 31) {
     problems.push("Birthday-bias criterion needs numbers above 31, which this lottery does not have.");
+  }
+  if (criteria.reuseLast && criteria.reuseLast.enabled) {
+    const r = criteria.reuseLast;
+    const last = (r.numbers || []).filter((n) => n >= 1 && n <= cfg.mainMax);
+    if (!last.length) {
+      problems.push("Reuse from last draw is on, but no last draw is set — enter or load one first.");
+    } else if (r.min > r.max) {
+      problems.push("Reuse from last draw: minimum is greater than maximum.");
+    } else if (r.min > cfg.mainPick) {
+      problems.push(`Reuse from last draw: cannot reuse ${r.min} numbers — a row only holds ${cfg.mainPick}.`);
+    } else {
+      const reqInLast = required.filter((n) => last.includes(n)).length;
+      const availFromLast = new Set(last.filter((n) => !excluded.includes(n))).size;
+      if (r.max < reqInLast) {
+        problems.push(`Reuse from last draw: ${reqInLast} required number(s) are already in the last draw, exceeding the maximum of ${r.max}.`);
+      }
+      if (r.min > availFromLast) {
+        problems.push(`Reuse from last draw: only ${availFromLast} of the last draw's numbers are available (after exclusions), fewer than the minimum of ${r.min}.`);
+      }
+    }
   }
   return problems;
 }
@@ -72,6 +129,26 @@ function rowPassesCriteria(mains, cfg, criteria, historyIndex, previousRows, rel
       counts[z]++;
       if (counts[z] > criteria.zoneSpread.maxPerZone) return false;
     }
+    const min = criteria.zoneSpread.minPerZone || 0;
+    if (min > 0 && counts.some((c) => c < min)) return false;
+  }
+
+  if (criteria.parityRun.enabled && !relaxed && longestParityRun(mains) > criteria.parityRun.value) return false;
+
+  if (criteria.maxArithmetic && criteria.maxArithmetic.enabled && !relaxed &&
+      longestArithmeticProgression(mains) > criteria.maxArithmetic.value) return false;
+
+  if (criteria.sameLastDigit && criteria.sameLastDigit.enabled && !relaxed &&
+      maxSameLastDigit(mains) > criteria.sameLastDigit.max) return false;
+
+  if (criteria.sharedMultiple && criteria.sharedMultiple.enabled && !relaxed &&
+      maxSharedDivisor(mains) > criteria.sharedMultiple.max) return false;
+
+  if (criteria.lowHigh && criteria.lowHigh.enabled && !relaxed) {
+    const half = Math.ceil(cfg.mainMax / 2);
+    let low = 0;
+    for (const n of mains) if (n <= half) low++;
+    if (low < criteria.lowHigh.minLow || mains.length - low < criteria.lowHigh.minHigh) return false;
   }
 
   if (criteria.birthdayBias.enabled && !relaxed) {
@@ -100,7 +177,26 @@ function rowPassesCriteria(mains, cfg, criteria, historyIndex, previousRows, rel
     }
   }
 
+  // Reuse-from-last-draw is satisfied structurally by the sampler, but verify
+  // defensively — it is a hard constraint and never relaxed.
+  if (criteria.reuseLast && criteria.reuseLast.enabled && criteria.reuseLast.numbers.length) {
+    const lastSet = new Set(criteria.reuseLast.numbers);
+    const shared = mains.reduce((c, n) => c + (lastSet.has(n) ? 1 : 0), 0);
+    if (shared < criteria.reuseLast.min || shared > criteria.reuseLast.max) return false;
+  }
+
   return true;
+}
+
+/** How many last-draw numbers to carry into the next row, picked at random
+    within the feasible band. Returns null if infeasible. */
+function chooseReuseCount(reuseLast, required, lastPoolSize, otherPoolSize, need) {
+  const reqInLast = required.reduce((c, n) => c + (reuseLast.numbers.includes(n) ? 1 : 0), 0);
+  // a = extra numbers drawn from the last-draw pool; total reuse = reqInLast + a.
+  let aMin = Math.max(0, reuseLast.min - reqInLast, need - otherPoolSize);
+  let aMax = Math.min(lastPoolSize, reuseLast.max - reqInLast, need);
+  if (aMin > aMax) return null;
+  return aMin + randInt(aMax - aMin + 1);
 }
 
 /**
@@ -109,8 +205,12 @@ function rowPassesCriteria(mains, cfg, criteria, historyIndex, previousRows, rel
  * If the soft (style) criteria can't be met after many attempts, they are
  * relaxed for that row — hard exclusions (history, required numbers,
  * batch overlap, excluded numbers) are never relaxed.
+ *
+ * `weights` (optional): array indexed 1..mainMax of relative sampling
+ * weights for the main numbers, used to bias the suggestions towards e.g.
+ * overdue or rarely-drawn numbers. Null/undefined means uniform sampling.
  */
-function generateTickets(count, cfg, criteria, historyIndex) {
+function generateTickets(count, cfg, criteria, historyIndex, weights) {
   const warnings = [];
   const problems = validateCriteriaFeasibility(cfg, criteria);
   if (problems.length) return { tickets: [], warnings: problems };
@@ -124,6 +224,17 @@ function generateTickets(count, cfg, criteria, historyIndex) {
   const starPool = [];
   for (let n = 1; n <= cfg.starMax; n++) starPool.push(n);
 
+  // Reuse-from-last-draw splits the pool so each row can carry over a chosen
+  // number of last-draw numbers by construction.
+  const reuse = criteria.reuseLast && criteria.reuseLast.enabled && criteria.reuseLast.numbers.length
+    ? criteria.reuseLast
+    : null;
+  const lastSet = reuse ? new Set(reuse.numbers) : null;
+  const lastPool = reuse ? pool.filter((n) => lastSet.has(n)) : null;
+  const otherPool = reuse ? pool.filter((n) => !lastSet.has(n)) : null;
+  const weightOf = weights ? (n) => weights[n] || 1 : null;
+  const pick = (arr, k) => (weightOf ? weightedSampleDistinct(arr, k, weightOf) : sampleDistinct(arr, k));
+
   const tickets = [];
   const previousRows = [];
 
@@ -134,9 +245,16 @@ function generateTickets(count, cfg, criteria, historyIndex) {
 
     for (let attempt = 0; attempt < MAX_ATTEMPTS_PER_ROW; attempt++) {
       const useRelaxed = attempt >= softBudget;
-      const mains = sampleDistinct(pool, cfg.mainPick - required.length)
-        .concat(required)
-        .sort((a, b) => a - b);
+      const pickCount = cfg.mainPick - required.length;
+      let sampled;
+      if (reuse) {
+        const a = chooseReuseCount(reuse, required, lastPool.length, otherPool.length, pickCount);
+        if (a === null) break; // infeasible (also reported by validation)
+        sampled = pick(lastPool, a).concat(pick(otherPool, pickCount - a));
+      } else {
+        sampled = pick(pool, pickCount);
+      }
+      const mains = sampled.concat(required).sort((a, b) => a - b);
       if (rowPassesCriteria(mains, cfg, criteria, historyIndex, previousRows, useRelaxed)) {
         const stars = cfg.starPick > 0 ? sampleDistinct(starPool, cfg.starPick) : [];
         ticket = { mains, stars, relaxed: useRelaxed };
@@ -153,7 +271,7 @@ function generateTickets(count, cfg, criteria, historyIndex) {
       break;
     }
     if (relaxed) {
-      warnings.push(`Row ${t + 1}: style criteria (sum/odd-even/sequence/zones) were relaxed to satisfy the exclusion rules.`);
+      warnings.push(`Row ${t + 1}: style criteria (balance, spread and anti-patterns) were relaxed to satisfy the exclusion rules.`);
     }
     tickets.push(ticket);
     previousRows.push(ticket.mains);

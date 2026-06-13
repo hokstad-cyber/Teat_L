@@ -17,13 +17,14 @@ const LOTTERIES = {
     defaultSumMin: 90,
     defaultSumMax: 155,
     zoneSize: 10,
-    sources: [
-      {
-        label: "Norsk Tipping – Lotto results",
-        url: "https://www.norsk-tipping.no/lotterier/lotto/resultater",
-        note: "Official results page. Direct fetch is usually blocked by CORS; open the page, copy the draws and paste them below, or download/export and import the file."
-      }
-    ]
+    crawl: {
+      api: "https://www.norsk-tipping.no/api-lotto/getResultInfo.json",
+      pages: [
+        "https://www.norsk-tipping.no/lotteri/lotto/resultater",
+        "https://www.norsk-tipping.no/lotterier/lotto/resultater"
+      ],
+      csvName: "lotto-results-2020-2026.csv"
+    }
   },
   eurojackpot: {
     id: "eurojackpot",
@@ -39,18 +40,14 @@ const LOTTERIES = {
     defaultSumMin: 95,
     defaultSumMax: 160,
     zoneSize: 10,
-    sources: [
-      {
-        label: "Norsk Tipping – Eurojackpot results",
-        url: "https://www.norsk-tipping.no/lotterier/eurojackpot/resultater",
-        note: "Official results page. Direct fetch is usually blocked by CORS; copy the draws and paste them below, or import a downloaded file."
-      },
-      {
-        label: "eurojackpot.org – results archive",
-        url: "https://www.euro-jackpot.net/results-archive",
-        note: "Results archive with yearly pages. If fetching fails due to CORS, copy/paste or import a CSV download."
-      }
-    ]
+    crawl: {
+      api: "https://www.norsk-tipping.no/api-eurojackpot/getResultInfo.json",
+      pages: [
+        "https://www.norsk-tipping.no/lotteri/eurojackpot/resultater",
+        "https://www.norsk-tipping.no/lotterier/eurojackpot/resultater"
+      ],
+      csvName: "eurojackpot-results-2020-2026.csv"
+    }
   }
 };
 
