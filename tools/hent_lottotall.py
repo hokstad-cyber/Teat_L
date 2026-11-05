@@ -458,6 +458,28 @@ def parse_pasted(game: str, text: str, source: str = "manuell") -> list:
     return out
 
 
+def parse_external_csv(game: str, text: str, source: str) -> list:
+    """Tolker header-baserte CSV-er fra andre kilder, f.eks. eonurk/EuroJackpot
+    (draw_date,main_numbers,euro_numbers) eller vårt eget format."""
+    rows = list(csv.DictReader(text.splitlines()))
+    out = []
+    for r in rows:
+        r = {k.strip().lower(): (v or "") for k, v in r.items() if k}
+        if r.get("game") and r["game"] != game:
+            continue
+        m = DATE_RX.search(r.get("draw_date", ""))
+        if not m:
+            continue
+        d = date(int(m.group(1)), int(m.group(2)), int(m.group(3))) if m.group(1) else date(int(m.group(6)), int(m.group(5)), int(m.group(4)))
+        nums = lambda s: [int(x) for x in re.findall(r"\d+", s or "")]
+        mains = nums(r.get("main_numbers"))
+        bonus = nums(r.get("euro_numbers") or r.get("star_numbers") or r.get("bonus_numbers"))
+        out.append(Draw(game=game, draw_date=d, main_numbers=sorted(mains), main_numbers_draw_order=[],
+                        bonus_numbers=sorted(bonus), source=source,
+                        fetched_at=datetime.now(timezone.utc).isoformat(timespec="seconds")))
+    return out
+
+
 # ---------------------------------------------------------------------------
 # CSV-lagring (idempotent sammenslåing)
 # ---------------------------------------------------------------------------
@@ -549,7 +571,11 @@ def cmd_compare(args):
 
 def cmd_import(args):
     text = Path(args.file).read_text("utf-8")
-    new = parse_pasted(args.game, text, source=args.source)
+    first = text.splitlines()[0].lower() if text.strip() else ""
+    if "draw_date" in first and "main_numbers" in first:
+        new = parse_external_csv(args.game, text, source=args.source)
+    else:
+        new = parse_pasted(args.game, text, source=args.source)
     out = Path(args.out)
     merged, added, conflicts = merge(read_csv(out), new)
     validate_dataset(merged)

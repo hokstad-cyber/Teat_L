@@ -24,12 +24,15 @@ loaded history.
 ### Historical draws
 Load previously drawn winning numbers and stop the generator from repeating history:
 
-- **Crawl 2020–2026 results** — crawls the Norsk Tipping results for the current
-  lottery (`norsk-tipping.no/lotteri/{lotto,eurojackpot}/resultater` and the draw
-  API behind them, walking backwards draw by draw until it passes 2020), keeps the
-  draws from 2020–2026, downloads them as a CSV file (`date,n1,…` — one dated row
-  per draw) and loads them straight into the app. Requests try the site directly
-  and fall back to public read-through mirrors when blocked by CORS.
+- **Fetch results** — collects draws for your lookback window through an ordered
+  chain of sources with automatic fallback: **Norsk Tipping's results API**
+  (`api.norsk-tipping.no/LotteryGameInfo/v2`, 15-week windows, polite spacing) →
+  the **dataset shipped with the app** (`data/*.csv`, maintained by
+  `tools/hent_lottotall.py` and a weekly workflow) → an **independent public
+  dataset** (Eurojackpot) → the **legacy API**. Later sources are only asked for
+  weeks still missing; a source that fails twice in a row is left alone. The
+  status list under the button shows what each source delivered or why it failed,
+  and **Download dataset CSV** exports everything loaded.
 - **Paste draws** — one draw per line, e.g. `16.03.2024 1 5 12 19 23 28 31`
   (Eurojackpot: `14.06.2024 7 19 28 33 45 + 3 9`). Norwegian (`dd.mm.yyyy`) and ISO
   dates are both understood.
@@ -46,6 +49,14 @@ History controls:
   generated row may contain all four).
 
 A statistics panel shows per-number frequency and hot/cold numbers for the active window.
+
+### Data basis for your rows
+Every draw remembers its source. The **Data basis** panel above the rows shows, week by
+week and year by year, which weeks were fetched (and from which source), which are
+missing or only partial, and — highlighted — which weeks actually feed the generator
+(the lookback window used by exclusions, statistics and weighting). The summary states
+plainly e.g. "260 draws in 258 weeks are used for your rows — 2021-W45 to 2026-W45",
+lists incomplete weeks, and the results bar links to it ("based on 260 past draws").
 
 ### Last draw & reuse
 A highlighted **Last draw** card (gold-ringed balls) shows the most recent draw — by
@@ -135,7 +146,9 @@ and on small screens the results come before the settings.
 - The same sampler drives generation, single-row rerolls, locked rows and the strictness
   gauge, so the gauge reflects exactly what the generator will do.
 - A UX review with the prioritised backlog behind these features is in
-  [`docs/UX-REVIEW.md`](docs/UX-REVIEW.md).
+  [`docs/UX-REVIEW.md`](docs/UX-REVIEW.md); the source assessment behind the data
+  fetching is in [`docs/DATAINNHENTING-HISTORISKE-TALL.md`](docs/DATAINNHENTING-HISTORISKE-TALL.md)
+  and the offline collector is `tools/hent_lottotall.py` (`python3 tools/hent_lottotall.py selftest`).
 
 ## Fair-play disclaimer
 

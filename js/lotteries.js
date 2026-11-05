@@ -20,13 +20,23 @@ const LOTTERIES = {
     drawsPerWeek: 1,
     // Default price per row in NOK; user-editable because prices change.
     defaultRowPrice: 6,
-    crawl: {
-      api: "https://www.norsk-tipping.no/api-lotto/getResultInfo.json",
-      pages: [
-        "https://www.norsk-tipping.no/lotteri/lotto/resultater",
-        "https://www.norsk-tipping.no/lotterier/lotto/resultater"
-      ],
-      csvName: "lotto-results-2020-2026.csv"
+    /* Data sources, tried in order (see js/crawler.js and
+       docs/DATAINNHENTING-HISTORISKE-TALL.md). */
+    launch: "1986-04-19",
+    // Draws per week over time, used to judge whether a week is complete.
+    // drawDays: 0 = Sunday … 6 = Saturday.
+    schedule: [{ from: "1986-04-19", perWeek: 1, drawDays: [6] }],
+    api: {
+      // The results API behind norsk-tipping.no's own results page.
+      v2: "https://api.norsk-tipping.no/LotteryGameInfo/v2/api/results/lotto",
+      v2WindowDays: 15 * 7 - 1,
+      // Endpoint used by 2015-era wrappers; kept as a last resort.
+      legacy: "https://www.norsk-tipping.no/api-lotto/getResultInfo.json"
+    },
+    data: {
+      bundled: "data/lotto.csv",
+      thirdParty: null,
+      csvName: "lotto-results.csv"
     }
   },
   eurojackpot: {
@@ -45,13 +55,22 @@ const LOTTERIES = {
     zoneSize: 10,
     drawsPerWeek: 2,
     defaultRowPrice: 25,
-    crawl: {
-      api: "https://www.norsk-tipping.no/api-eurojackpot/getResultInfo.json",
-      pages: [
-        "https://www.norsk-tipping.no/lotteri/eurojackpot/resultater",
-        "https://www.norsk-tipping.no/lotterier/eurojackpot/resultater"
-      ],
-      csvName: "eurojackpot-results-2020-2026.csv"
+    launch: "2012-03-23",
+    // One Friday draw until March 2022; Tuesday draws from 29 March 2022.
+    schedule: [{ from: "2012-03-23", perWeek: 1, drawDays: [5] }, { from: "2022-03-29", perWeek: 2, drawDays: [2, 5] }],
+    api: {
+      v2: "https://api.norsk-tipping.no/LotteryGameInfo/v2/api/results/eurojackpot",
+      v2WindowDays: 15 * 7 - 1,
+      legacy: "https://www.norsk-tipping.no/api-eurojackpot/getResultInfo.json"
+    },
+    data: {
+      bundled: "data/eurojackpot.csv",
+      // Independent, openly published dataset used as a fallback and for cross-checks.
+      thirdParty: {
+        label: "GitHub dataset eonurk/EuroJackpot",
+        url: "https://raw.githubusercontent.com/eonurk/EuroJackpot/main/eurojackpot_results.csv"
+      },
+      csvName: "eurojackpot-results.csv"
     }
   }
 };

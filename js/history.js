@@ -276,3 +276,268 @@ function drawsDateRange(draws) {
   }
   return { min, max };
 }
+
+/* ======================= ISO weeks & coverage ======================= */
+
+/** ISO-8601 year and week for a date (local time). */
+function isoWeekOf(date) {
+  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+  const day = d.getUTCDay() || 7; // Monday=1 … Sunday=7
+  d.setUTCDate(d.getUTCDate() + 4 - day); // nearest Thursday
+  const isoYear = d.getUTCFullYear();
+  const yearStart = new Date(Date.UTC(isoYear, 0, 1));
+  const week = Math.ceil(((d - yearStart) / 86400000 + 1) / 7);
+  return { year: isoYear, week };
+}
+
+/** Monday (local midnight) that starts ISO week `week` of `year`. */
+function isoWeekStart(year, week) {
+  const jan4 = new Date(year, 0, 4);
+  const day = jan4.getDay() || 7;
+  const monday = new Date(year, 0, 4 - (day - 1));
+  monday.setDate(monday.getDate() + (week - 1) * 7);
+  return monday;
+}
+
+function isoWeeksInYear(year) {
+  return isoWeekOf(new Date(year, 11, 28)).week;
+}
+
+function parseIsoDate(s) {
+  const m = String(s).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  return m ? new Date(parseInt(m[1], 10), parseInt(m[2], 10) - 1, parseInt(m[3], 10)) : null;
+}
+
+/**
+ * Draws expected in the ISO week starting `weekStart`, from cfg.schedule.
+ * Only draw days that fall inside [rangeFrom, rangeTo] (when given) and on or
+ * after launch are counted, so a range that starts late in a week, or the
+ * current week, is not judged against draws that cannot exist.
+ */
+function expectedDrawsInWeek(cfg, weekStart, rangeFrom, rangeTo) {
+  const launch = parseIsoDate(cfg.launch);
+  let count = 0;
+  for (let i = 0; i < 7; i++) {
+    const day = new Date(weekStart.getFullYear(), weekStart.getMonth(), weekStart.getDate() + i);
+    if (launch && day < launch) continue;
+    if (rangeFrom && day < rangeFrom) continue;
+    if (rangeTo && day > rangeTo) continue;
+    let rule = null;
+    for (const s of cfg.schedule || []) {
+      const from = parseIsoDate(s.from);
+      if (from && from <= day) rule = s;
+    }
+    if (!rule) continue;
+    if (rule.drawDays ? rule.drawDays.includes(day.getDay()) : i === 6) count++;
+  }
+  return count;
+}
+
+/**
+ * Week-by-week coverage of `draws` between `from` and `to` (inclusive).
+ * `usedKeys` is a Set of "yyyy-mm-dd" dates that the generator actually uses.
+ * Returns { years: [{ year, weeks: [{ week, start, expected, fetched, used, sources, status }] }], totals }.
+ * status: "future" | "before-launch" | "complete" | "partial" | "missing" | "pending" (current week)
+ */
+function coverageByWeek(draws, cfg, from, to, usedKeys, now) {
+  const today = now || new Date();
+  const byWeek = new Map();
+  for (const d of draws) {
+    if (!d.date) continue;
+    const { year, week } = isoWeekOf(d.date);
+    const key = `${year}-${week}`;
+    const entry = byWeek.get(key) || { fetched: 0, used: 0, sources: new Set() };
+    entry.fetched++;
+    if (usedKeys && usedKeys.has(isoDateKey(d.date))) entry.used++;
+    entry.sources.add(d.source || "unknown");
+    byWeek.set(key, entry);
+  }
+
+  const startWeek = isoWeekOf(from);
+  const endWeek = isoWeekOf(to);
+  const years = [];
+  const totals = { weeks: 0, complete: 0, partial: 0, missing: 0, future: 0, beforeLaunch: 0, fetchedDraws: 0, usedDraws: 0, usedWeeks: 0, bySource: {} };
+  for (let y = startWeek.year; y <= endWeek.year; y++) {
+    const weeks = [];
+    const last = isoWeeksInYear(y);
+    for (let w = 1; w <= last; w++) {
+      if (y === startWeek.year && w < startWeek.week) continue;
+      if (y === endWeek.year && w > endWeek.week) continue;
+      const start = isoWeekStart(y, w);
+      const entry = byWeek.get(`${y}-${w}`) || { fetched: 0, used: 0, sources: new Set() };
+      const weekEnd = new Date(start.getFullYear(), start.getMonth(), start.getDate() + 6);
+      // Expected draws: only draw days inside the range, and (for the current
+      // week) up to today — so a week is "pending" rather than "missing" until
+      // its draw day has actually passed.
+      const expectedSoFar = expectedDrawsInWeek(cfg, start, from, weekEnd >= today ? today : null);
+      const expected = expectedDrawsInWeek(cfg, start, from, null);
+      let status;
+      if (start > today) status = "future";
+      else if (expected === 0) status = "before-launch";
+      else if (entry.fetched >= expected) status = "complete";
+      else if (weekEnd >= today && entry.fetched >= expectedSoFar) status = "pending";
+      else if (entry.fetched > 0) status = "partial";
+      else status = "missing";
+      const week = { week: w, start, expected, fetched: entry.fetched, used: entry.used, sources: [...entry.sources].sort(), status };
+      weeks.push(week);
+      totals.weeks++;
+      if (status === "complete") totals.complete++;
+      else if (status === "partial") totals.partial++;
+      else if (status === "missing") totals.missing++;
+      else if (status === "future" || status === "pending") totals.future++;
+      else totals.beforeLaunch++;
+      totals.fetchedDraws += entry.fetched;
+      totals.usedDraws += entry.used;
+      if (entry.used) totals.usedWeeks++;
+      for (const s of entry.sources) totals.bySource[s] = (totals.bySource[s] || 0) + 1;
+    }
+    years.push({ year: y, weeks });
+  }
+  return { years, totals };
+}
+
+function isoDateKey(date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+/* ======================= Source-specific parsers ======================= */
+
+/**
+ * Parse a Norsk Tipping LotteryGameInfo v2 response. The draw list is found
+ * recursively (objects carrying winnerNumber + drawDate) so a changed wrapper
+ * key does not break parsing. type 1 = main numbers, type 2 = bonus/star.
+ */
+function parseNorskTippingV2(data, cfg, source) {
+  const items = [];
+  (function walk(x) {
+    if (Array.isArray(x)) return x.forEach(walk);
+    if (x && typeof x === "object") {
+      if ("winnerNumber" in x && "drawDate" in x) return items.push(x);
+      Object.values(x).forEach(walk);
+    }
+  })(data);
+  const draws = [];
+  for (const it of items) {
+    const found = parseDateFromText(String(it.drawDate).slice(0, 10)) || parseDateFromText(String(it.drawDate));
+    if (!found) continue;
+    const mains = [];
+    const extra = [];
+    for (const wn of it.winnerNumber || []) {
+      const n = parseInt(String(wn.number), 10);
+      if (!Number.isInteger(n)) continue;
+      const order = Number.isInteger(wn.drawOrder) ? wn.drawOrder : 1e6;
+      if (wn.type === 1) mains.push([order, n]);
+      else if (wn.type === 2) extra.push([order, n]);
+    }
+    mains.sort((a, b) => a[0] - b[0]);
+    extra.sort((a, b) => a[0] - b[0]);
+    const mainNums = mains.map((p) => p[1]);
+    if (mainNums.length !== cfg.mainPick || new Set(mainNums).size !== cfg.mainPick) continue;
+    if (mainNums.some((n) => n < 1 || n > cfg.mainMax)) continue;
+    const extraNums = extra.map((p) => p[1]);
+    draws.push({
+      date: found.date,
+      mains: mainNums.slice().sort((a, b) => a - b),
+      drawOrder: mainNums,
+      stars: cfg.starPick ? extraNums.slice(0, cfg.starPick).sort((a, b) => a - b) : [],
+      bonus: cfg.starPick ? [] : extraNums.slice().sort((a, b) => a - b),
+      drawId: Number.isInteger(it.drawId) ? it.drawId : null,
+      source: source || "nt-api-v2"
+    });
+  }
+  return draws;
+}
+
+/** Minimal RFC-4180-ish CSV line splitter (handles quoted fields with commas). */
+function splitCsvLine(line) {
+  const out = [];
+  let cur = "";
+  let q = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (q) {
+      if (c === '"' && line[i + 1] === '"') { cur += '"'; i++; }
+      else if (c === '"') q = false;
+      else cur += c;
+    } else if (c === '"') q = true;
+    else if (c === ",") { out.push(cur); cur = ""; }
+    else cur += c;
+  }
+  out.push(cur);
+  return out;
+}
+
+/**
+ * Parse header-based CSV datasets:
+ *  - the collector's format (game,draw_date,…,main_numbers,…,bonus_numbers,…,source)
+ *  - eonurk/EuroJackpot (draw_date,main_numbers,euro_numbers with comma lists)
+ * Returns [] when the header is not recognised, so callers can fall back to
+ * the line-oriented parser.
+ */
+function parseHeaderCsv(text, cfg, source) {
+  const lines = text.split(/\r?\n/).filter((l) => l.trim());
+  if (!lines.length) return [];
+  const header = splitCsvLine(lines[0]).map((h) => h.trim().toLowerCase());
+  const iDate = header.indexOf("draw_date");
+  const iMain = header.indexOf("main_numbers");
+  if (iDate < 0 || iMain < 0) return [];
+  const iStars = ["euro_numbers", "star_numbers", "stars"].map((k) => header.indexOf(k)).find((i) => i >= 0);
+  const iBonus = header.indexOf("bonus_numbers");
+  const iGame = header.indexOf("game");
+  const iSource = header.indexOf("source");
+  const iDrawId = header.indexOf("draw_id");
+  const nums = (s) => (s || "").split(/[\s,;]+/).filter(Boolean).map((x) => parseInt(x, 10)).filter(Number.isInteger);
+  const draws = [];
+  for (let r = 1; r < lines.length; r++) {
+    const cols = splitCsvLine(lines[r]);
+    if (iGame >= 0 && cols[iGame] && cols[iGame].trim() !== cfg.id) continue;
+    const found = parseDateFromText(cols[iDate] || "");
+    if (!found) continue;
+    const mains = nums(cols[iMain]);
+    if (mains.length !== cfg.mainPick || new Set(mains).size !== cfg.mainPick) continue;
+    if (mains.some((n) => n < 1 || n > cfg.mainMax)) continue;
+    let stars = [];
+    let bonus = [];
+    if (cfg.starPick) {
+      stars = nums(iStars !== undefined ? cols[iStars] : iBonus >= 0 ? cols[iBonus] : "").slice(0, cfg.starPick);
+      if (stars.length !== cfg.starPick || stars.some((n) => n < 1 || n > cfg.starMax)) stars = [];
+    } else if (iBonus >= 0) {
+      bonus = nums(cols[iBonus]);
+    }
+    draws.push({
+      date: found.date,
+      mains: mains.slice().sort((a, b) => a - b),
+      stars: stars.sort((a, b) => a - b),
+      bonus,
+      drawId: iDrawId >= 0 && /^\d+$/.test(cols[iDrawId] || "") ? parseInt(cols[iDrawId], 10) : null,
+      source: (iSource >= 0 && cols[iSource] && cols[iSource].trim()) || source || "csv"
+    });
+  }
+  return draws;
+}
+
+/**
+ * Merge draws from several sources. Earlier entries win on the same date;
+ * a later entry with the same date but different numbers is reported as a
+ * conflict instead of being added. Returns { draws, conflicts, added }.
+ */
+function mergeDrawsByDate(existing, incoming) {
+  const byDate = new Map();
+  for (const d of existing) if (d.date) byDate.set(isoDateKey(d.date), d);
+  const conflicts = [];
+  let added = 0;
+  const out = existing.slice();
+  for (const d of incoming) {
+    if (!d.date) continue;
+    const k = isoDateKey(d.date);
+    const have = byDate.get(k);
+    if (!have) {
+      byDate.set(k, d);
+      out.push(d);
+      added++;
+    } else if (have.mains.join("-") !== d.mains.join("-") || (have.stars || []).join("-") !== (d.stars || []).join("-")) {
+      conflicts.push({ date: k, kept: have, rejected: d });
+    }
+  }
+  return { draws: out, conflicts, added };
+}

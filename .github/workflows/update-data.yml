@@ -1,0 +1,56 @@
+name: Update draw datasets
+
+# Weekly collection of Lotto and Eurojackpot results into data/*.csv using
+# tools/hent_lottotall.py (polite: ~1 request per 2 s, cached, validated).
+# Fails — and commits nothing — on validation errors or source conflicts.
+# Runs where norsk-tipping.no is reachable; this cloud sandbox is not.
+
+on:
+  schedule:
+    - cron: "17 3 * * 0"   # Sunday 03:17 UTC, after Saturday's Lotto draw
+    - cron: "17 3 * * 3,6" # Wed/Sat for Eurojackpot (Tue/Fri draws)
+  workflow_dispatch:
+    inputs:
+      from_date:
+        description: "Start date (YYYY-MM-DD) for a full re-fetch; leave empty for incremental update"
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Self-test collector (offline)
+        run: python3 tools/hent_lottotall.py selftest
+      - name: Fetch Lotto
+        run: |
+          if [ -n "${{ github.event.inputs.from_date }}" ]; then
+            python3 tools/hent_lottotall.py fetch --game lotto --from "${{ github.event.inputs.from_date }}" --out data/lotto.csv
+          else
+            python3 tools/hent_lottotall.py update --game lotto --from 2015-03-01 --out data/lotto.csv
+          fi
+      - name: Fetch Eurojackpot
+        run: |
+          if [ -n "${{ github.event.inputs.from_date }}" ]; then
+            python3 tools/hent_lottotall.py fetch --game eurojackpot --from "${{ github.event.inputs.from_date }}" --out data/eurojackpot.csv
+          else
+            python3 tools/hent_lottotall.py update --game eurojackpot --from 2013-02-01 --out data/eurojackpot.csv
+          fi
+      - name: Validate
+        run: |
+          python3 tools/hent_lottotall.py validate data/lotto.csv
+          python3 tools/hent_lottotall.py validate data/eurojackpot.csv
+      - name: Commit if changed
+        run: |
+          git config user.name "lykketall-data-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add data/*.csv
+          git diff --cached --quiet && echo "no changes" && exit 0
+          git commit -m "data: update draw datasets ($(date -u +%Y-%m-%d))"
+          git push

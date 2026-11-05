@@ -19,6 +19,8 @@
     rowPrice: { lotto: LOTTERIES.lotto.defaultRowPrice, eurojackpot: LOTTERIES.eurojackpot.defaultRowPrice },
     /** where loaded draws came from, per lottery: [{ kind, label, count, at }] */
     provenance: { lotto: [], eurojackpot: [] },
+    /** report from the last automatic collection, per lottery */
+    lastCollect: { lotto: null, eurojackpot: null },
     /** active preset id, or "custom" once the user changes a rule */
     preset: null,
     /** which collapsible panels are open */
@@ -48,13 +50,17 @@
         preset: state.preset,
         panelsOpen: state.panelsOpen,
         tickets: state.tickets,
-        generatedFor: state.generatedFor
+        generatedFor: state.generatedFor,
+        lastCollect: state.lastCollect
       };
       for (const id of Object.keys(state.history)) {
         serializable.history[id] = state.history[id].map((d) => ({
-          date: d.date ? d.date.toISOString().slice(0, 10) : null,
+          date: d.date ? isoDateKey(d.date) : null,
           mains: d.mains,
-          stars: d.stars
+          stars: d.stars,
+          bonus: d.bonus && d.bonus.length ? d.bonus : undefined,
+          source: d.source || undefined,
+          drawId: d.drawId || undefined
         }));
       }
       localStorage.setItem(STORAGE_KEY, JSON.stringify(serializable));
@@ -79,9 +85,12 @@
         state.history[id] = arr
           .filter((d) => d && Array.isArray(d.mains))
           .map((d) => ({
-            date: d.date ? new Date(d.date) : null,
+            date: d.date ? parseIsoDate(d.date) || new Date(d.date) : null,
             mains: d.mains,
-            stars: Array.isArray(d.stars) ? d.stars : []
+            stars: Array.isArray(d.stars) ? d.stars : [],
+            bonus: Array.isArray(d.bonus) ? d.bonus : [],
+            source: typeof d.source === "string" ? d.source : "unknown",
+            drawId: Number.isInteger(d.drawId) ? d.drawId : null
           }));
       }
     }
@@ -111,6 +120,9 @@
       }
     }
     if (typeof data.preset === "string") state.preset = data.preset;
+    if (data.lastCollect && typeof data.lastCollect === "object") {
+      for (const id of Object.keys(state.lastCollect)) if (data.lastCollect[id]) state.lastCollect[id] = data.lastCollect[id];
+    }
     if (data.panelsOpen && typeof data.panelsOpen === "object") state.panelsOpen = data.panelsOpen;
     if (Array.isArray(data.tickets) && data.generatedFor && LOTTERIES[data.generatedFor]) {
       state.tickets = data.tickets.filter((t) => t && Array.isArray(t.mains)).map((t) => ({
@@ -309,6 +321,10 @@
     syncReuseUI();
     renderStats();
     renderProvenance();
+    renderCoverage();
+    const lc = state.lastCollect[id];
+    if (lc && lc.sources) renderSourceStatus(lc.sources.map((x) => Object.assign({ errors: [] }, x)), true);
+    else { $("#source-status").innerHTML = ""; $("#source-status-wrap").hidden = true; delete $("#source-status-wrap").dataset.done; }
     updatePanelCounts();
     scheduleStrictness();
     saveState();
@@ -317,6 +333,10 @@
   /* ---------- history ---------- */
 
   const PROVENANCE_KINDS = {
+    "nt-api-v2": "Norsk Tipping's results API",
+    "bundled-csv": "the dataset shipped with the app",
+    "thirdparty-csv": "an independent public dataset",
+    "nt-api-legacy": "Norsk Tipping's legacy API",
     crawl: "unofficial Norsk Tipping data (crawled)",
     paste: "draws you pasted",
     file: "an imported file",
@@ -324,6 +344,7 @@
   };
 
   function addDraws(draws, sourceLabel, kind) {
+    if (kind) for (const d of draws) if (!d.source) d.source = kind === "paste" ? "manual" : kind;
     if (!draws.length) {
       setHistoryStatus(`Could not find any valid ${LOTTERIES[state.lotteryId].name} draws in ${sourceLabel}. Check the format: one draw per line with a date and the winning numbers.`, false);
       return;
@@ -339,6 +360,7 @@
     renderStats();
     refreshLastDraw();
     renderProvenance();
+    renderCoverage();
     updatePanelCounts();
     scheduleStrictness();
     saveState();
@@ -371,9 +393,11 @@
     if (kinds.includes("demo")) {
       level = "demo";
       text += ". Includes synthetic demo data, so statistics here are not real.";
-    } else if (kinds.includes("crawl")) {
+    } else if (kinds.some((k) => k === "thirdparty-csv" || k === "nt-api-legacy" || k === "crawl")) {
       level = "caution";
-      text += ". Unofficial source — check important numbers against Norsk Tipping.";
+      text += ". Partly from unofficial sources — check important numbers against Norsk Tipping.";
+    } else if (kinds.includes("nt-api-v2") || kinds.includes("bundled-csv")) {
+      text += ". Official draw data via Norsk Tipping's results API.";
     }
     if (coverage !== null && coverage < 0.85) {
       level = level === "demo" ? "demo" : "caution";
@@ -596,7 +620,7 @@
     $("#reuse-body").classList.toggle("open", $("#reuse-enabled").checked);
   }
 
-  /* ---------- crawl (2020-2026 results + CSV) ---------- */
+  /* ---------- automatic collection with fallback chain ---------- */
 
   function downloadBlob(content, type, filename) {
     const blob = new Blob([content], { type });
@@ -607,29 +631,214 @@
     URL.revokeObjectURL(a.href);
   }
 
-  async function crawlHistory() {
+  /** Period the app wants data for: the lookback window (or 10 years), never before launch. */
+  function wantedRange(cfg) {
+    const today = new Date();
+    const years = $("#hist-window").checked ? Math.max(1, intVal("hist-window-years", 5)) : 10;
+    let from = new Date(today.getFullYear() - years, today.getMonth(), today.getDate());
+    const launch = parseIsoDate(cfg.launch);
+    if (launch && from < launch) from = launch;
+    return { from, to: today };
+  }
+
+  function renderSourceStatus(sources, done) {
+    const list = $("#source-status");
+    list.innerHTML = "";
+    for (const src of sources) {
+      const li = document.createElement("li");
+      li.className = `src src-${src.status}`;
+      const icon = { ok: "✓", failed: "✗", empty: "–", skipped: "·", running: "…" }[src.status] || "·";
+      const detail = src.status === "ok"
+        ? `${src.draws} draw${src.draws === 1 ? "" : "s"}${src.windows ? ` from ${src.windows} request${src.windows === 1 ? "" : "s"}` : ""}`
+        : src.note || (src.errors[0] ? src.errors[0] : src.status);
+      li.innerHTML = `<span class="src-icon" aria-hidden="true">${icon}</span><span class="src-label">${escapeHtml(src.label)}</span><span class="src-detail">${escapeHtml(detail)}</span>`;
+      if (src.errors.length > 1) li.title = src.errors.join("\n");
+      list.appendChild(li);
+    }
+    $("#source-status-wrap").hidden = !sources.length;
+    if (done) $("#source-status-wrap").dataset.done = "true";
+  }
+
+  async function fetchHistoryChain() {
     const cfg = LOTTERIES[state.lotteryId];
+    const id = cfg.id;
     const btn = $("#history-crawl");
     btn.disabled = true;
     const oldLabel = btn.textContent;
-    btn.textContent = "Crawling…";
+    btn.textContent = "Fetching…";
     $("#crawl-progress").hidden = false;
+    delete $("#source-status-wrap").dataset.done;
+    $("#source-status").innerHTML = "";
+    const range = wantedRange(cfg);
     try {
-      setHistoryStatus(`Crawling ${cfg.name} results 2020–2026…`, false);
-      const { draws, source } = await crawlLottery(cfg, (requests, message) => {
-        setHistoryStatus(message || `Crawling ${cfg.name} results 2020–2026… ${requests} requests so far`, false);
+      setHistoryStatus(`Fetching ${cfg.name} results ${isoDateKey(range.from)} → ${isoDateKey(range.to)}…`, false);
+      const before = state.history[id].length;
+      const result = await collectHistory(cfg, range, state.history[id], (msg, sources) => {
+        setHistoryStatus(msg, false);
+        renderSourceStatus(sources, false);
       });
-      downloadBlob(buildResultsCsv(draws, cfg), "text/csv", cfg.crawl.csvName);
-      addDraws(draws, `${source} — CSV "${cfg.crawl.csvName}" downloaded`, "crawl");
-    } catch (e) {
-      setHistoryStatus(
-        `Crawling failed (${e.message}). Paste the draws in the box below, or import a CSV/JSON file instead.`,
-        false
+      state.history[id] = result.draws;
+      const added = result.draws.length - before;
+      state.lastCollect[id] = {
+        at: new Date().toISOString(),
+        from: isoDateKey(range.from),
+        to: isoDateKey(range.to),
+        sources: result.sources.map((x) => ({ id: x.id, label: x.label, status: x.status, draws: x.draws, windows: x.windows, note: x.note, errors: x.errors.slice(0, 5) })),
+        conflicts: result.conflicts.length,
+        missingWeeks: result.coverage.totals.missing,
+        partialWeeks: result.coverage.totals.partial
+      };
+      for (const src of result.sources) {
+        if (src.draws > 0) state.provenance[id].push({ kind: src.id, label: src.label, count: src.draws, at: new Date().toISOString() });
+      }
+      state.provenance[id] = state.provenance[id].slice(-8);
+      renderSourceStatus(result.sources, true);
+      const t = result.coverage.totals;
+      const okSources = result.sources.filter((x) => x.status === "ok").map((x) => x.label);
+      refreshHistoryStatus(
+        `Fetched ${added} new draw${added === 1 ? "" : "s"} ` +
+          (okSources.length ? `from ${okSources.join(" + ")}. ` : "— no source answered. ") +
+          `${t.complete} of ${t.complete + t.partial + t.missing} weeks complete` +
+          (t.missing || t.partial ? ` (${t.missing} missing, ${t.partial} partial)` : "") +
+          (result.conflicts.length ? ` · ${result.conflicts.length} conflicting draw${result.conflicts.length === 1 ? "" : "s"} kept from the earlier source` : "") + "."
       );
+      renderStats();
+      refreshLastDraw();
+      renderProvenance();
+      renderCoverage();
+      updatePanelCounts();
+      scheduleStrictness();
+      saveState();
+      if (!result.draws.length) {
+        showToast("No source could deliver results. Paste draws or import a CSV below.");
+      } else if (t.missing || t.partial) {
+        showToast(`${t.missing + t.partial} week${t.missing + t.partial === 1 ? "" : "s"} still incomplete — see the data basis panel for which ones.`);
+      }
+    } catch (e) {
+      setHistoryStatus(`Fetching failed unexpectedly (${e.message}). Paste draws or import a CSV/JSON file instead.`, false);
     } finally {
       btn.disabled = false;
       btn.textContent = oldLabel;
       $("#crawl-progress").hidden = true;
+    }
+  }
+
+  function downloadDataset() {
+    const cfg = LOTTERIES[state.lotteryId];
+    const draws = state.history[cfg.id];
+    if (!draws.length) {
+      showToast("No draws loaded yet.");
+      return;
+    }
+    downloadBlob(buildResultsCsv(draws, cfg), "text/csv", cfg.data.csvName);
+    showToast(`Downloaded ${cfg.data.csvName} (${draws.length} draws).`);
+  }
+
+  /* ---------- coverage: which years and weeks are fetched and used ---------- */
+
+  function fmtWeek(year, week) {
+    return `${year}-W${String(week).padStart(2, "0")}`;
+  }
+
+  function renderCoverage() {
+    const cfg = LOTTERIES[state.lotteryId];
+    const all = state.history[cfg.id];
+    const card = $("#coverage-card");
+    if (!all.length) {
+      card.hidden = true;
+      return;
+    }
+    card.hidden = false;
+    const today = new Date();
+    const active = activeDraws();
+    const usedKeys = new Set(active.filter((d) => d.date).map((d) => isoDateKey(d.date)));
+    const windowOn = $("#hist-window").checked;
+    const years = intVal("hist-window-years", 5);
+    const windowStart = windowOn ? new Date(today.getFullYear() - years, today.getMonth(), today.getDate()) : null;
+    const dated = all.filter((d) => d.date).map((d) => d.date);
+    const earliest = dated.length ? new Date(Math.min(...dated)) : today;
+    let from = windowStart && windowStart < earliest ? windowStart : earliest;
+    if (!windowOn) from = earliest;
+    const launch = parseIsoDate(cfg.launch);
+    if (launch && from < launch) from = launch;
+    const cov = coverageByWeek(all, cfg, from, today, usedKeys);
+    const t = cov.totals;
+
+    // Summary: what the generator actually uses.
+    const usedDates = active.filter((d) => d.date).map((d) => d.date);
+    const uMin = usedDates.length ? new Date(Math.min(...usedDates)) : null;
+    const uMax = usedDates.length ? new Date(Math.max(...usedDates)) : null;
+    const wk = (d) => { const w = isoWeekOf(d); return fmtWeek(w.year, w.week); };
+    const inWindowWeeks = cov.years.flatMap((y) => y.weeks).filter((w) => !windowStart || w.start >= new Date(windowStart.getFullYear(), windowStart.getMonth(), windowStart.getDate() - 6));
+    const gapsInWindow = inWindowWeeks.filter((w) => w.status === "missing" || w.status === "partial");
+    const summary = [];
+    summary.push(`<strong>${active.length}</strong> draw${active.length === 1 ? "" : "s"} in <strong>${t.usedWeeks}</strong> week${t.usedWeeks === 1 ? "" : "s"} are used for your rows` +
+      (uMin ? ` — ${wk(uMin)} to ${wk(uMax)}` : "") +
+      (windowOn ? ` (lookback ${years} year${years === 1 ? "" : "s"})` : " (no lookback limit)") + ".");
+    if (gapsInWindow.length) {
+      summary.push(`<span class="cov-warn">⚠ ${gapsInWindow.length} week${gapsInWindow.length === 1 ? "" : "s"} in that window ${gapsInWindow.length === 1 ? "is" : "are"} missing or incomplete</span> — exclusions and statistics cannot see those draws.`);
+    } else {
+      summary.push(`<span class="cov-ok">✓ every week in that window is complete</span>.`);
+    }
+    const srcParts = Object.entries(t.bySource).sort((a, b) => b[1] - a[1]).map(([k, n]) => `${sourceLabel(k)}: ${n} week${n === 1 ? "" : "s"}`);
+    if (srcParts.length) summary.push(`Sources — ${srcParts.join(" · ")}.`);
+    const lc = state.lastCollect[cfg.id];
+    if (lc) summary.push(`Last automatic fetch ${new Date(lc.at).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" })} for ${lc.from} → ${lc.to}.`);
+    $("#coverage-summary").innerHTML = summary.map((x) => `<p>${x}</p>`).join("");
+
+    // Grid: one row per ISO year, one cell per week.
+    const grid = $("#coverage-grid");
+    grid.innerHTML = "";
+    for (const y of cov.years.slice().reverse()) {
+      const row = document.createElement("div");
+      row.className = "cov-row";
+      const complete = y.weeks.filter((w) => w.status === "complete").length;
+      const relevant = y.weeks.filter((w) => w.status !== "future" && w.status !== "pending" && w.status !== "before-launch").length;
+      const used = y.weeks.filter((w) => w.used > 0).length;
+      row.setAttribute("role", "img");
+      row.setAttribute("aria-label", `${y.year}: ${complete} of ${relevant} weeks complete, ${used} weeks used for your rows`);
+      const label = document.createElement("span");
+      label.className = "cov-year";
+      label.textContent = y.year;
+      row.appendChild(label);
+      const cells = document.createElement("span");
+      cells.className = "cov-cells";
+      // pad so week numbers line up across years
+      const firstWeek = y.weeks.length ? y.weeks[0].week : 1;
+      for (let i = 1; i < firstWeek; i++) {
+        const pad = document.createElement("i");
+        pad.className = "cov-cell cov-pad";
+        cells.appendChild(pad);
+      }
+      for (const w of y.weeks) {
+        const c = document.createElement("i");
+        c.className = `cov-cell cov-${w.status}${w.used ? " cov-used" : ""}`;
+        const startTxt = w.start.toLocaleDateString("en-GB", { day: "2-digit", month: "short" });
+        const srcTxt = w.sources.length ? w.sources.map((k) => sourceLabel(k)).join(", ") : "";
+        const launchDate = parseIsoDate(cfg.launch);
+        const statusTxt = w.status === "future" ? "future"
+          : w.status === "pending" ? `${w.fetched} fetched so far — draw day not passed yet`
+          : w.status === "before-launch" ? (launchDate && w.start < launchDate ? "before launch" : "no draw day inside the range")
+          : `${w.fetched} of ${w.expected} draw${w.expected === 1 ? "" : "s"} fetched`;
+        c.title = `${fmtWeek(y.year, w.week)} (from ${startTxt}) · ${statusTxt}` +
+          (srcTxt ? ` · ${srcTxt}` : "") + (w.used ? " · used for your rows" : w.fetched ? " · outside lookback window" : "");
+        cells.appendChild(c);
+      }
+      row.appendChild(cells);
+      grid.appendChild(row);
+    }
+
+    // Missing weeks list (most recent first), limited.
+    const missing = cov.years.flatMap((y) => y.weeks.filter((w) => w.status === "missing" || w.status === "partial").map((w) => ({ y: y.year, w })))
+      .sort((a, b) => b.w.start - a.w.start);
+    const ml = $("#coverage-missing");
+    if (!missing.length) {
+      ml.hidden = true;
+    } else {
+      ml.hidden = false;
+      const shown = missing.slice(0, 12).map((m) => `${fmtWeek(m.y, m.w.week)}${m.w.status === "partial" ? ` (${m.w.fetched}/${m.w.expected})` : ""}`);
+      ml.innerHTML = `<strong>${missing.length} incomplete week${missing.length === 1 ? "" : "s"}:</strong> ${shown.join(", ")}${missing.length > 12 ? ", …" : ""}. ` +
+        `Fetch again later, or paste the missing draws from norsk-tipping.no.`;
     }
   }
 
@@ -647,7 +856,8 @@
       draws.push({
         date,
         mains: sampleDistinct(pool, cfg.mainPick),
-        stars: cfg.starPick > 0 ? sampleDistinct(starPool, cfg.starPick) : []
+        stars: cfg.starPick > 0 ? sampleDistinct(starPool, cfg.starPick) : [],
+        source: "demo"
       });
     }
     addDraws(draws, "demo data (synthetic — not real results)", "demo");
@@ -960,6 +1170,8 @@
     parts.push(relaxed
       ? `<button type="button" class="stat-warn" id="summary-relaxed">⚠ ${relaxed} relaxed — why?</button>`
       : '<span class="stat">✓ all rows follow your rules</span>');
+    const basis = activeDraws().length;
+    if (basis) parts.push(`<a class="stat stat-link" href="#coverage-card">📅 based on ${basis} past draws</a>`);
     $("#summary-stats").innerHTML = parts.join("");
     const relaxedBtn = $("#summary-relaxed");
     if (relaxedBtn) {
@@ -1296,6 +1508,7 @@
         if (e.target.id === "hist-window" || e.target.id === "hist-window-years") {
           refreshHistoryStatus();
           renderStats();
+          renderCoverage();
         }
         updatePanelCounts();
         scheduleStrictness();
@@ -1378,7 +1591,9 @@
       addDraws(parseDraws(text, LOTTERIES[state.lotteryId]), `"${file.name}"`, "file");
       e.target.value = "";
     });
-    $("#history-crawl").addEventListener("click", crawlHistory);
+    $("#history-crawl").addEventListener("click", fetchHistoryChain);
+    $("#history-download").addEventListener("click", downloadDataset);
+    $("#coverage-fetch").addEventListener("click", fetchHistoryChain);
     $("#history-demo").addEventListener("click", loadDemoData);
     $("#history-clear").addEventListener("click", () => {
       const id = state.lotteryId;
@@ -1442,6 +1657,7 @@
   function afterHistoryChange() {
     refreshHistoryStatus();
     renderStats();
+    renderCoverage();
     refreshLastDraw();
     renderProvenance();
     updatePanelCounts();

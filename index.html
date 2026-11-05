@@ -326,10 +326,15 @@
 
         <div class="history-load">
           <div class="btn-row" style="margin-bottom: 0.8rem;">
-            <button id="history-crawl" class="btn small primary">⛏ Crawl 2020–2026 results</button>
+            <button id="history-crawl" class="btn small primary">⤓ Fetch results</button>
+            <button id="history-download" class="btn small">Download dataset CSV</button>
           </div>
-          <progress id="crawl-progress" class="crawl-progress" hidden aria-label="Crawling results"></progress>
-          <p class="mini-hint" style="margin: 0 0 0.9rem;">Crawls the Norsk Tipping results for the current lottery (norsk-tipping.no/lotteri/…/resultater and its draw API), keeps the draws from 2020–2026, downloads them as a CSV file with the date on every row, and loads them straight into the app. The site may block browser requests (CORS) — backup mirrors are tried automatically. You can also paste draws or import a CSV/JSON file below.</p>
+          <progress id="crawl-progress" class="crawl-progress" hidden aria-label="Fetching results"></progress>
+          <p class="mini-hint" style="margin: 0 0 0.7rem;">Fetches draws for your lookback window and falls back automatically: Norsk Tipping's results API → the dataset shipped with the app → an independent public dataset → the legacy API. Later sources are only asked for weeks still missing. Every draw remembers its source, and the <a href="#coverage-card">data basis panel</a> shows which years and weeks were fetched and which are used.</p>
+          <div id="source-status-wrap" class="source-status-wrap" hidden>
+            <p class="mini-hint" style="margin: 0 0 0.3rem;"><strong>Source chain, last fetch:</strong></p>
+            <ul id="source-status" class="source-status" aria-live="polite"></ul>
+          </div>
 
           <label>Paste draws (one per line, e.g. <code>16.03.2024 1 5 12 19 23 28 31</code>)
             <textarea id="history-paste" rows="3" placeholder="date  n1 n2 n3 …"></textarea>
@@ -480,6 +485,23 @@
             <p class="reuse-summary" id="reuse-summary">Carry over <strong>0–2</strong> of these numbers into each generated row.</p>
           </div>
         </div>
+      </section>
+
+      <section class="panel coverage-card" id="coverage-card" aria-labelledby="coverage-title" hidden>
+        <div class="coverage-head">
+          <h2 id="coverage-title"><span class="panel-icon" aria-hidden="true">📅</span> Data basis for your rows</h2>
+          <button type="button" id="coverage-fetch" class="btn small">⤓ Fetch missing</button>
+        </div>
+        <div id="coverage-summary" class="coverage-summary"></div>
+        <div class="cov-legend" aria-hidden="true">
+          <span><i class="cov-cell cov-complete cov-used"></i> used for your rows</span>
+          <span><i class="cov-cell cov-complete"></i> fetched, outside lookback</span>
+          <span><i class="cov-cell cov-partial"></i> partial week</span>
+          <span><i class="cov-cell cov-missing"></i> missing</span>
+          <span><i class="cov-cell cov-future"></i> future / before launch</span>
+        </div>
+        <div id="coverage-grid" class="coverage-grid"></div>
+        <p id="coverage-missing" class="coverage-missing mini-hint" hidden></p>
       </section>
 
       <div id="summary-bar" class="summary-bar" hidden>

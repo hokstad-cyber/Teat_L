@@ -264,3 +264,16 @@ Alle punktene under kunne ikke avklares fra dette miljøet (vertene er blokkert)
 12. **Svar fra Norsk Tipping** på forespørselen om uttrekk/tillatelse — det eneste som gir en formelt trygg, komplett historikk fra 1986.
 
 Når punkt 1–3 er avklart, kan trinn 2–4 i planen gjennomføres på under en time.
+
+---
+
+## Status for gjennomføring (2026-11-05)
+
+| Trinn | Status |
+|---|---|
+| Kildekjede med fallback i appen (`js/crawler.js`): NT-API v2 → medfølgende datasett → uavhengig datasett → gammelt API | ✅ Implementert. Senere kilder spørres bare om uker som fortsatt mangler; en kilde som feiler to ganger på rad får fred. Ingen CORS-speil. |
+| Proveniens per trekning (`source`) og per-uke dekning («Datagrunnlag»-panelet: hentet / delvis / mangler / brukes) | ✅ Implementert; testet i nettleser med mockede kilder (API svarer bare siste vindu → datasett fyller resten; API nede → datasett tar over). |
+| Innhentingsverktøy (`tools/hent_lottotall.py`) med validering, sammenligning og manuell import | ✅ Implementert, selvtest OK. Importerer også eksterne CSV-er (`draw_date,main_numbers,euro_numbers`). |
+| Medfølgende datasett | ◐ `data/eurojackpot.csv`: 828 trekninger 2012-03-23 → 2025-02-25 fra det uavhengige datasettet (kilde merket `tredjepart:eonurk`, 0 valideringsfeil, 0 hull). `data/lotto.csv` mangler til innhentingen kjøres der norsk-tipping.no er nåbar. |
+| Ukentlig oppdatering (`.github/workflows/update-data.yml`) | ◐ Lagt inn, ikke kjørt: krever at robots.txt/vilkår er sjekket (del I, punkt 1–2) og at jobben får nå `api.norsk-tipping.no`. |
+| Trinn 0–3 i planen (vilkår, forespørsel til NT, prøvekjøring, dekningsstart) | ⏳ Må gjøres av eier — ikke mulig fra dette miljøet. |

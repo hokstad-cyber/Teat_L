@@ -6,9 +6,9 @@ const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
 
-const context = { crypto: require("crypto").webcrypto, console };
+const context = { crypto: require("crypto").webcrypto, console, setTimeout, clearTimeout, fetch: undefined, AbortController: undefined };
 vm.createContext(context);
-for (const file of ["lotteries.js", "util.js", "history.js", "generator.js"]) {
+for (const file of ["lotteries.js", "util.js", "history.js", "generator.js", "crawler.js"]) {
   const code = fs.readFileSync(path.join(__dirname, "..", "js", file), "utf8");
   vm.runInContext(code, context, { filename: file });
 }
@@ -31,13 +31,17 @@ const {
   overlapCount, parseDrawsText, parseDraws, filterDrawsByYears, buildHistoryIndex,
   dedupeDraws, generateTickets, buildResultsCsv, longestParityRun, longestArithmeticProgression,
   maxSameLastDigit, maxSharedDivisor, zoneOfNumber, weightedSampleDistinct,
-  drawsSinceLastSeen, softRuleFailures, estimatePassRate
+  drawsSinceLastSeen, softRuleFailures, estimatePassRate,
+  isoWeekOf, isoWeekStart, isoWeeksInYear, coverageByWeek, parseNorskTippingV2, parseHeaderCsv,
+  mergeDrawsByDate, windowsNewestFirst, expectedDrawsInWeek, isoDateKey
 } = vm.runInContext(
   `({ LOTTERIES, sampleDistinct, combinationKeys, longestConsecutiveRun, sumOf, countOdd,
       overlapCount, parseDrawsText, parseDraws, filterDrawsByYears, buildHistoryIndex,
       dedupeDraws, generateTickets, buildResultsCsv, longestParityRun, longestArithmeticProgression,
       maxSameLastDigit, maxSharedDivisor, zoneOfNumber, weightedSampleDistinct,
-      drawsSinceLastSeen, softRuleFailures, estimatePassRate })`,
+      drawsSinceLastSeen, softRuleFailures, estimatePassRate,
+      isoWeekOf, isoWeekStart, isoWeeksInYear, coverageByWeek, parseNorskTippingV2, parseHeaderCsv,
+      mergeDrawsByDate, windowsNewestFirst, expectedDrawsInWeek, isoDateKey })`,
   context
 );
 
@@ -448,6 +452,104 @@ for (const cfg of [lotto, euro]) {
   crit.excludeNumbers = { enabled: true, numbers: Array.from({ length: 30 }, (_, i) => i + 1) };
   const { tickets, warnings } = generateTickets(10, lotto, crit, buildHistoryIndex([], 0));
   assert(tickets.length === 0 && warnings.length > 0, "infeasible criteria rejected with warning");
+}
+
+/* ---- ISO weeks ---- */
+{
+  const w = (y, m, d) => { const r = isoWeekOf(new Date(y, m - 1, d)); return `${r.year}-W${r.week}`; };
+  assert(w(2024, 1, 1) === "2024-W1", "isoWeek: 2024-01-01 is W1");
+  assert(w(2021, 1, 3) === "2020-W53", "isoWeek: 2021-01-03 belongs to 2020-W53");
+  assert(w(2026, 11, 5) === "2026-W45", "isoWeek: 2026-11-05 is W45");
+  assert(w(2024, 12, 30) === "2025-W1", "isoWeek: 2024-12-30 is 2025-W1");
+  assert(isoWeeksInYear(2020) === 53 && isoWeeksInYear(2024) === 52, "isoWeeksInYear");
+  const ws = isoWeekStart(2026, 45);
+  assert(ws.getFullYear() === 2026 && ws.getMonth() === 10 && ws.getDate() === 2 && ws.getDay() === 1, "isoWeekStart: 2026-W45 starts Monday 2 Nov");
+  assert(isoDateKey(new Date(2026, 0, 5)) === "2026-01-05", "isoDateKey");
+}
+
+/* ---- schedule / expected draws ---- */
+{
+  assert(expectedDrawsInWeek(euro, isoWeekStart(2022, 12)) === 1, "euro: W12 2022 expects one draw");
+  assert(expectedDrawsInWeek(euro, isoWeekStart(2022, 13)) === 2, "euro: W13 2022 (Tue 29 Mar) expects two draws");
+  assert(expectedDrawsInWeek(euro, isoWeekStart(2011, 10)) === 0, "euro: before launch expects none");
+  assert(expectedDrawsInWeek(lotto, isoWeekStart(2024, 10)) === 1, "lotto: one draw per week");
+  // Range starting on a Sunday: that week has no draw day left inside the range.
+  assert(expectedDrawsInWeek(euro, isoWeekStart(2023, 44), new Date(2023, 10, 5)) === 0, "euro: week cut off by a Sunday range start expects none");
+  assert(expectedDrawsInWeek(lotto, isoWeekStart(2024, 10), new Date(2024, 2, 8)) === 1, "lotto: range starting Friday still expects Saturday's draw");
+  // Current week on a Wednesday: Tuesday's draw expected so far, Friday's not yet.
+  assert(expectedDrawsInWeek(euro, isoWeekStart(2024, 10), null, new Date(2024, 2, 6)) === 1, "euro: only Tuesday counted up to Wednesday");
+  assert(expectedDrawsInWeek(lotto, isoWeekStart(2012, 12)) === 1 && expectedDrawsInWeek(euro, isoWeekStart(2012, 12)) === 1, "launch week: only draw days after launch");
+}
+
+/* ---- coverage ---- */
+{
+  const mk = (iso, src) => ({ date: new Date(iso), mains: [1, 2, 3, 4, 5, 6, 7], stars: [], source: src });
+  const draws = [mk("2024-03-02", "nt-api-v2"), mk("2024-03-09", "bundled-csv"), mk("2024-03-23", "nt-api-v2")];
+  const used = new Set(["2024-03-09", "2024-03-23"]);
+  const cov = coverageByWeek(draws, lotto, new Date(2024, 1, 26), new Date(2024, 2, 24), used, new Date(2024, 2, 25));
+  const weeks = cov.years[0].weeks;
+  assert(cov.years.length === 1 && weeks.length === 4, `coverage: 4 ISO weeks W9–W12 in range (${weeks.length})`);
+  assert(weeks.map((w) => w.status).join(",") === "complete,complete,missing,complete", "coverage: statuses " + weeks.map((w) => w.status).join(","));
+  assert(weeks[0].used === 0 && weeks[1].used === 1, "coverage: used flags follow usedKeys");
+  assert(cov.totals.missing === 1 && cov.totals.complete === 3 && cov.totals.usedWeeks === 2, "coverage: totals");
+  assert(cov.totals.bySource["nt-api-v2"] === 2 && cov.totals.bySource["bundled-csv"] === 1, "coverage: per-source week counts");
+  const fut = coverageByWeek([], lotto, new Date(2024, 2, 18), new Date(2024, 3, 7), null, new Date(2024, 2, 25));
+  assert(fut.years[0].weeks.map((w) => w.status).join(",") === "missing,pending,future", "coverage: current week is pending, later weeks future (" + fut.years[0].weeks.map((w) => w.status).join(",") + ")");
+  // Current week whose draw day has passed without a draw is missing, not pending (today = Sunday 31 Mar 2024, W13 Saturday draw absent).
+  const sat = coverageByWeek([], lotto, new Date(2024, 2, 25), new Date(2024, 2, 31), null, new Date(2024, 2, 31));
+  assert(sat.years[0].weeks[0].status === "missing", "coverage: current week is missing once its draw day has passed (" + sat.years[0].weeks[0].status + ")");
+  // Range starting on a Sunday does not create a phantom missing week.
+  const sun = coverageByWeek([{ date: new Date(2023, 10, 7), mains: [1,2,3,4,5], stars: [1,2], source: "x" }], euro, new Date(2023, 10, 5), new Date(2023, 10, 12), null, new Date(2023, 10, 13));
+  assert(sun.years[0].weeks.map((w) => w.status).join(",") === "before-launch,partial", "coverage: Sunday range start week has no expected draws (" + sun.years[0].weeks.map((w) => w.status).join(",") + ")");
+  // Eurojackpot partial week after the Tuesday draw was added
+  const ej = [{ date: new Date(2022, 3, 1), mains: [1, 2, 3, 4, 5], stars: [1, 2], source: "x" }];
+  const c2 = coverageByWeek(ej, euro, new Date(2022, 2, 28), new Date(2022, 3, 3), null, new Date(2022, 3, 4));
+  assert(c2.years[0].weeks[0].status === "partial", "coverage: one of two Eurojackpot draws is partial");
+}
+
+/* ---- Norsk Tipping v2 parser ---- */
+{
+  const resp = { gameResult: [
+    { drawDate: "2024-03-16T19:00:00.000+01:00", drawId: 1900, turnover: "1", prize: [],
+      winnerNumber: [19, 5, 31, 12, 1, 28, 23].map((n, i) => ({ number: String(n), type: 1, drawOrder: i + 1 })).concat([{ number: "9", type: 2, drawOrder: 8 }]) },
+    { drawDate: "2024-03-09", drawId: 1899, winnerNumber: [2, 6, 11, 18, 22, 27, 30].map((n, i) => ({ number: n, type: 1, drawOrder: i + 1 })) }
+  ] };
+  const d = parseNorskTippingV2(resp, lotto, "nt-api-v2");
+  assert(d.length === 2, "v2: two draws");
+  assert(d[0].mains.join(",") === "1,5,12,19,23,28,31" && d[0].drawOrder.join(",") === "19,5,31,12,1,28,23", "v2: sorted mains + draw order");
+  assert(d[0].bonus.join(",") === "9" && d[0].stars.length === 0 && d[0].source === "nt-api-v2" && d[0].drawId === 1900, "v2: lotto bonus kept separately");
+  const ejResp = [{ drawDate: "2024-06-14", winnerNumber: [[7,1],[19,1],[28,1],[33,1],[45,1],[3,2],[9,2]].map(([n, t], i) => ({ number: n, type: t, drawOrder: i + 1 })) }];
+  const e = parseNorskTippingV2(ejResp, euro, "nt-api-v2");
+  assert(e.length === 1 && e[0].stars.join(",") === "3,9", "v2: eurojackpot stars from type 2");
+  assert(parseNorskTippingV2({ foo: "bar" }, lotto).length === 0, "v2: unknown shape yields nothing");
+}
+
+/* ---- header CSV parser (collector + eonurk formats) ---- */
+{
+  const tool = "game,draw_date,iso_year,iso_week,draw_id,main_numbers,main_numbers_draw_order,bonus_numbers,prize_tiers_json,turnover_nok,source,source_url,fetched_at,validation_status,validation_notes,row_hash\n" +
+    "lotto,2024-03-02,2024,9,,3 7 13 20 24 29 33,,4,,,manuell,,2026-11-05T16:57:36+00:00,ok,,a9744e983af654dd\n" +
+    "eurojackpot,2024-03-01,2024,9,,1 2 3 4 5,,6 7,,,x,,,ok,,\n";
+  const l = parseHeaderCsv(tool, lotto, "bundled-csv");
+  assert(l.length === 1 && l[0].mains.join(",") === "3,7,13,20,24,29,33" && l[0].bonus.join(",") === "4" && l[0].source === "manuell", "headerCsv: collector format, filtered by game, iso_week not misread");
+  const eo = 'draw_date,main_numbers,euro_numbers\n2025-02-25,"28,31,38,42,48","3,10"\n2012-03-23,"5,8,21,37,46","6,8"\n';
+  const e = parseHeaderCsv(eo, euro, "thirdparty-csv");
+  assert(e.length === 2 && e[0].stars.join(",") === "3,10" && e[1].date.getFullYear() === 2012 && e[0].source === "thirdparty-csv", "headerCsv: eonurk format");
+  assert(parseHeaderCsv("16.03.2024 1 5 12 19 23 28 31", lotto).length === 0, "headerCsv: plain text is not claimed");
+}
+
+/* ---- merge by date with conflicts ---- */
+{
+  const a = [{ date: new Date(2024, 2, 2), mains: [1,2,3,4,5,6,7], stars: [], source: "nt-api-v2" }];
+  const b = [{ date: new Date(2024, 2, 2), mains: [1,2,3,4,5,6,8], stars: [], source: "csv" },
+             { date: new Date(2024, 2, 9), mains: [1,2,3,4,5,6,9], stars: [], source: "csv" }];
+  const m = mergeDrawsByDate(a, b);
+  assert(m.draws.length === 2 && m.added === 1 && m.conflicts.length === 1 && m.draws[0].source === "nt-api-v2", "merge: earlier source wins, conflict reported");
+}
+
+/* ---- windows ---- */
+{
+  const w = windowsNewestFirst(new Date(2024, 0, 1), new Date(2024, 11, 31), 104);
+  assert(w.length === 4 && isoDateKey(w[0].to) === "2024-12-31" && isoDateKey(w[0].from) === "2024-09-18" && isoDateKey(w[3].from) === "2024-01-01", "windows: newest first, clipped to range");
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

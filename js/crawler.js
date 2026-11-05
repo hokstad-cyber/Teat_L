@@ -1,147 +1,253 @@
-/* Crawler for historic results (2020-2026). Browser-only: uses fetch and
-   DOMParser. Strategy A walks the unofficial Norsk Tipping JSON API draw by
-   draw; strategy B parses the result pages. Every request tries the source
-   directly, then public read-through mirrors (the pages block cross-origin
-   browser requests). */
+/* Historical results: an ordered chain of sources with automatic fallback.
+   Browser-only (uses fetch). Pure helpers live in history.js.
+
+   Order (see docs/DATAINNHENTING-HISTORISKE-TALL.md):
+     1. nt-api-v2      Norsk Tipping's own results API, 15-week windows
+     2. bundled-csv    data/<game>.csv shipped with the app (collector output)
+     3. thirdparty-csv independent public dataset (Eurojackpot only)
+     4. nt-api-legacy  2015-era drawID endpoint, last resort
+   Every draw carries `source`; every week in the requested range is reported
+   as complete / partial / missing, with the sources that covered it. */
 "use strict";
 
-const CRAWL_FROM = new Date(2020, 0, 1);
-const CRAWL_TO = new Date(2026, 11, 31);
-const CRAWL_TIMEOUT_MS = 12000;
-const CRAWL_MAX_REQUESTS = 700;
-const CRAWL_CONCURRENCY = 5;
-/* Stop walking once this many draws in a row are older than 2020. */
-const CRAWL_OLD_STREAK_STOP = 8;
+const SOURCE_LABELS = {
+  "nt-api-v2": "Norsk Tipping results API",
+  "bundled-csv": "Dataset shipped with the app",
+  "thirdparty-csv": "Independent public dataset",
+  "nt-api-legacy": "Norsk Tipping legacy API",
+  manual: "Entered or pasted manually",
+  manuell: "Entered or pasted manually",
+  file: "Imported file",
+  demo: "Synthetic demo data",
+  "norsk-tipping-api-v2": "Norsk Tipping results API (collector)",
+  "uttrekk-nt": "Norsk Tipping data extract",
+  unknown: "Unknown source"
+};
 
-const CRAWL_ROUTES = [
-  { name: "the source directly", make: (u) => u },
-  { name: "backup mirror allorigins.win", make: (u) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}` },
-  { name: "backup mirror corsproxy.io", make: (u) => `https://corsproxy.io/?url=${encodeURIComponent(u)}` },
-  { name: "backup mirror codetabs.com", make: (u) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(u)}` }
-];
-
-function crawlFetchWithTimeout(url) {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), CRAWL_TIMEOUT_MS);
-  return fetch(url, { mode: "cors", signal: ctrl.signal }).finally(() => clearTimeout(timer));
+/** Human label for a draw's source key, including collector/third-party keys. */
+function sourceLabel(key) {
+  if (!key) return SOURCE_LABELS.unknown;
+  if (SOURCE_LABELS[key]) return SOURCE_LABELS[key];
+  const tp = key.match(/^(?:tredjepart|thirdparty|third-party):(.+)$/);
+  if (tp) return `Independent dataset (${tp[1]})`;
+  return key;
 }
 
-/** Fetch trying direct first, then mirrors; `preferredIdx` reorders so a
-    route that already worked for this host is tried first. */
-async function crawlFetch(url, preferredIdx) {
-  const order = CRAWL_ROUTES.map((_, i) => i);
-  if (preferredIdx > 0) {
-    order.splice(order.indexOf(preferredIdx), 1);
-    order.unshift(preferredIdx);
+const FETCH_TIMEOUT_MS = 12000;
+const API_PAUSE_MS = 1500;          // polite spacing between API calls
+const API_MAX_CONSECUTIVE_FAILS = 2; // stop hammering a source that is down
+const LEGACY_MAX_REQUESTS = 60;
+
+function fetchWithTimeout(url, init) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
+  return fetch(url, Object.assign({ mode: "cors", signal: ctrl.signal }, init || {})).finally(() => clearTimeout(timer));
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+function describeError(e) {
+  if (!e) return "unknown error";
+  if (e.name === "AbortError") return "timed out";
+  if (e.message === "Failed to fetch" || e.name === "TypeError") return "blocked by the browser (network or CORS)";
+  return e.message || String(e);
+}
+
+/** Windows of `days` from newest to oldest, within [from, to]. */
+function windowsNewestFirst(from, to, days) {
+  const out = [];
+  let end = new Date(to);
+  while (end >= from) {
+    const start = new Date(end.getFullYear(), end.getMonth(), end.getDate() - days);
+    out.push({ from: start < from ? new Date(from) : start, to: new Date(end) });
+    end = new Date(start.getFullYear(), start.getMonth(), start.getDate() - 1);
   }
-  const failures = [];
-  for (const i of order) {
-    try {
-      const res = await crawlFetchWithTimeout(CRAWL_ROUTES[i].make(url));
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const text = await res.text();
-      if (!text.trim()) throw new Error("empty response");
-      return { text, routeIdx: i, via: CRAWL_ROUTES[i].name };
-    } catch (e) {
-      failures.push(`${CRAWL_ROUTES[i].name}: ${e.name === "AbortError" ? "timed out" : e.message}`);
+  return out;
+}
+
+/** Weeks in [from, to] that still need draws, as a Set of "year-week". */
+function missingWeekKeys(draws, cfg, from, to) {
+  const cov = coverageByWeek(draws, cfg, from, to, null);
+  const keys = new Set();
+  for (const y of cov.years) for (const w of y.weeks) if (w.status === "missing" || w.status === "partial") keys.add(`${y.year}-${w.week}`);
+  return keys;
+}
+
+function windowHasMissing(win, missing) {
+  const a = isoWeekOf(win.from);
+  const b = isoWeekOf(win.to);
+  for (let y = a.year; y <= b.year; y++) {
+    const last = isoWeeksInYear(y);
+    for (let w = y === a.year ? a.week : 1; w <= (y === b.year ? b.week : last); w++) {
+      if (missing.has(`${y}-${w}`)) return true;
     }
   }
-  throw new Error(failures.join(" · "));
+  return false;
 }
 
-/** Turn fetched HTML into line-oriented text so the draw parser can work on it. */
-function crawlStripHtml(text) {
-  if (!/<[a-z!/]/i.test(text)) return text;
-  const doc = new DOMParser().parseFromString(text, "text/html");
-  for (const el of doc.querySelectorAll("script, style")) el.remove();
-  for (const el of doc.querySelectorAll("tr, li, p, div, h1, h2, h3")) el.append("\n");
-  return doc.body ? doc.body.textContent : text;
+/* ---------------- source 1: Norsk Tipping results API v2 ---------------- */
+
+async function sourceNtApiV2(cfg, range, state, report) {
+  const src = report.start("nt-api-v2", "nt-api-v2");
+  const wins = windowsNewestFirst(range.from, range.to, cfg.api.v2WindowDays);
+  let fails = 0;
+  let calls = 0;
+  for (const win of wins) {
+    if (!windowHasMissing(win, state.missing)) continue; // already covered by earlier data
+    const url = `${cfg.api.v2}?fromDate=${isoDateKey(win.from)}&toDate=${isoDateKey(win.to)}`;
+    report.progress(`Norsk Tipping API: ${isoDateKey(win.from)} → ${isoDateKey(win.to)} (${++calls} requests)`);
+    try {
+      const res = await fetchWithTimeout(url, { headers: { Accept: "application/json" } });
+      if (res.status === 401 || res.status === 403) throw Object.assign(new Error(`HTTP ${res.status} — access denied; not retried`), { fatal: true });
+      if (res.status === 429) throw Object.assign(new Error("HTTP 429 — rate limited; stopped to stay polite"), { fatal: true });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const draws = parseNorskTippingV2(await res.json(), cfg, "nt-api-v2");
+      state.add(draws, "nt-api-v2");
+      src.draws += draws.length;
+      src.windows++;
+      fails = 0;
+      if (draws.length === 0 && win.to < new Date(range.to.getFullYear() - 1, 0, 1)) {
+        // Empty window well in the past: likely before the API's own history start.
+        src.note = `no data before ${isoDateKey(win.to)} — the API's history seems to start later`;
+        break;
+      }
+    } catch (e) {
+      fails++;
+      src.errors.push(`${isoDateKey(win.from)}…${isoDateKey(win.to)}: ${describeError(e)}`);
+      if (e.fatal || fails >= API_MAX_CONSECUTIVE_FAILS) {
+        src.note = e.fatal ? describeError(e) : `gave up after ${fails} consecutive failures`;
+        break;
+      }
+    }
+    await sleep(API_PAUSE_MS);
+  }
+  report.finish(src);
 }
 
-function inCrawlRange(draw) {
-  return draw.date !== null && draw.date >= CRAWL_FROM && draw.date <= CRAWL_TO;
+/* ---------------- sources 2–3: CSV datasets ---------------- */
+
+async function sourceCsv(id, label, url, cfg, state, report) {
+  const src = report.start(id, label);
+  if (!url) {
+    src.status = "skipped";
+    src.note = "no dataset configured for this lottery";
+    report.finish(src);
+    return;
+  }
+  report.progress(`Loading ${SOURCE_LABELS[id] || label}…`);
+  try {
+    const res = await fetchWithTimeout(url);
+    if (!res.ok) throw new Error(res.status === 404 ? "not found (404)" : `HTTP ${res.status}`);
+    const text = await res.text();
+    let draws = parseHeaderCsv(text, cfg, id);
+    if (!draws.length) draws = parseDraws(text, cfg).map((d) => Object.assign(d, { source: id }));
+    draws = draws.filter((d) => d.date && d.date >= state.range.from && d.date <= state.range.to);
+    state.add(draws, id);
+    src.draws += draws.length;
+    if (!draws.length) src.note = "no draws in the requested period";
+  } catch (e) {
+    src.errors.push(describeError(e));
+    src.note = describeError(e);
+  }
+  report.finish(src);
 }
 
-function crawlExtractDrawId(text) {
+/* ---------------- source 4: legacy drawID API ---------------- */
+
+function extractLegacyDrawId(text) {
   const m = text.match(/"drawI[dD]"\s*:\s*"?(\d+)/);
   return m ? parseInt(m[1], 10) : null;
 }
 
-/** Strategy A: walk the unofficial JSON API backwards from the latest draw
-    until the draws predate 2020 (or the request budget runs out). */
-async function crawlViaApi(cfg, onProgress) {
-  const base = cfg.crawl.api;
-  const latest = await crawlFetch(base, -1);
-  const latestId = crawlExtractDrawId(latest.text);
-  const latestDraws = parseDraws(latest.text, cfg);
-  if (!latestId || !latestDraws.length) throw new Error("the API response had no recognisable draw");
-
-  const collected = latestDraws.slice();
-  let requests = 1;
-  let nextId = latestId - 1;
-  let oldStreak = 0;
-  let stopped = false;
-
-  const workers = Array.from({ length: CRAWL_CONCURRENCY }, async () => {
-    while (!stopped && nextId > 0 && requests < CRAWL_MAX_REQUESTS && oldStreak < CRAWL_OLD_STREAK_STOP) {
-      const id = nextId--;
+async function sourceNtLegacy(cfg, state, report) {
+  const src = report.start("nt-api-legacy", "nt-api-legacy");
+  if (!state.missing.size) {
+    src.status = "skipped";
+    src.note = "nothing left to fetch";
+    report.finish(src);
+    return;
+  }
+  try {
+    report.progress("Legacy Norsk Tipping API: latest draw…");
+    const res = await fetchWithTimeout(cfg.api.legacy);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const text = await res.text();
+    const latestId = extractLegacyDrawId(text);
+    const latest = parseDraws(text, cfg).map((d) => Object.assign(d, { source: "nt-api-legacy" }));
+    if (!latestId || !latest.length) throw new Error("no recognisable draw in the response");
+    state.add(latest, "nt-api-legacy");
+    src.draws += latest.length;
+    let id = latestId - 1;
+    let requests = 1;
+    while (requests < LEGACY_MAX_REQUESTS && state.missing.size) {
+      await sleep(API_PAUSE_MS);
+      const r = await fetchWithTimeout(`${cfg.api.legacy}?drawID=${id}`);
       requests++;
-      try {
-        const { text } = await crawlFetch(`${base}?drawID=${id}`, latest.routeIdx);
-        const draws = parseDraws(text, cfg);
-        if (draws.length) {
-          collected.push(...draws);
-          if (draws.every((d) => d.date !== null && d.date < CRAWL_FROM)) oldStreak++;
-          else oldStreak = 0;
-        }
-      } catch (e) {
-        /* skip this draw; the streak/budget limits bound the walk */
-      }
-      if (requests % 5 === 0) onProgress(requests);
+      if (!r.ok) break;
+      const draws = parseDraws(await r.text(), cfg).map((d) => Object.assign(d, { source: "nt-api-legacy" }));
+      if (!draws.length) break;
+      if (draws.every((d) => d.date && d.date < state.range.from)) break;
+      state.add(draws, "nt-api-legacy");
+      src.draws += draws.length;
+      report.progress(`Legacy API: ${requests} requests`);
+      id--;
     }
-    if (oldStreak >= CRAWL_OLD_STREAK_STOP) stopped = true;
-  });
-  await Promise.all(workers);
-
-  const draws = dedupeDraws(collected).filter(inCrawlRange);
-  if (!draws.length) throw new Error("the API yielded no draws within 2020-2026");
-  return { draws, source: `the Norsk Tipping API (via ${latest.via}, ${requests} requests)` };
+  } catch (e) {
+    src.errors.push(describeError(e));
+    src.note = describeError(e);
+  }
+  report.finish(src);
 }
 
-/** Strategy B: fetch the result pages and parse whatever draws they contain. */
-async function crawlViaPages(cfg, onProgress) {
-  const collected = [];
-  let lastError = null;
-  for (const url of cfg.crawl.pages) {
-    try {
-      onProgress(null, `Fetching ${url}…`);
-      const { text } = await crawlFetch(url, -1);
-      collected.push(...parseDraws(crawlStripHtml(text), cfg));
-    } catch (e) {
-      lastError = e;
-    }
-  }
-  const draws = dedupeDraws(collected).filter(inCrawlRange);
-  if (!draws.length) {
-    throw lastError || new Error("the result pages contained no parsable dated draws within 2020-2026");
-  }
-  return { draws, source: "the result pages" };
-}
+/* ---------------- orchestration ---------------- */
 
 /**
- * Crawl 2020-2026 results for a lottery. onProgress(requestCount, message?)
- * is called periodically. Returns { draws, source }.
+ * Collect draws for `cfg` between `range.from` and `range.to`, trying each
+ * source in order and only asking later sources for weeks still missing.
+ * `existing` draws (already loaded) count as covered.
+ * Returns { draws, sources, coverage, conflicts, range }.
  */
-async function crawlLottery(cfg, onProgress) {
-  let apiError;
-  try {
-    return await crawlViaApi(cfg, onProgress);
-  } catch (e) {
-    apiError = e;
-  }
-  try {
-    return await crawlViaPages(cfg, onProgress);
-  } catch (e) {
-    throw new Error(`API: ${apiError.message} — pages: ${e.message}`);
-  }
+async function collectHistory(cfg, range, existing, onProgress) {
+  const state = {
+    range,
+    draws: (existing || []).slice(),
+    conflicts: [],
+    missing: null,
+    add(draws, id) {
+      const { draws: merged, conflicts } = mergeDrawsByDate(this.draws, draws);
+      this.draws = merged;
+      this.conflicts.push(...conflicts.map((c) => Object.assign(c, { source: id })));
+      this.missing = missingWeekKeys(this.draws, cfg, range.from, range.to);
+    }
+  };
+  state.missing = missingWeekKeys(state.draws, cfg, range.from, range.to);
+
+  const sources = [];
+  const report = {
+    start(id, label) {
+      const s = { id, label: SOURCE_LABELS[id] || label, status: "running", draws: 0, windows: 0, errors: [], note: "" };
+      sources.push(s);
+      return s;
+    },
+    finish(s) {
+      if (s.status === "running") s.status = s.draws > 0 ? "ok" : s.errors.length ? "failed" : "empty";
+      s.missingAfter = state.missing.size;
+    },
+    progress(msg) {
+      if (onProgress) onProgress(msg, sources);
+    }
+  };
+
+  await sourceNtApiV2(cfg, range, state, report);
+  if (state.missing.size) await sourceCsv("bundled-csv", "bundled-csv", cfg.data.bundled, cfg, state, report);
+  if (state.missing.size) await sourceCsv("thirdparty-csv", "thirdparty-csv", cfg.data.thirdParty && cfg.data.thirdParty.url, cfg, state, report);
+  if (state.missing.size) await sourceNtLegacy(cfg, state, report);
+
+  return {
+    draws: state.draws,
+    sources,
+    conflicts: state.conflicts,
+    range,
+    coverage: coverageByWeek(state.draws, cfg, range.from, range.to, null)
+  };
 }
