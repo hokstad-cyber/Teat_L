@@ -34,7 +34,7 @@ const {
   drawsSinceLastSeen, softRuleFailures, estimatePassRate,
   isoWeekOf, isoWeekStart, isoWeeksInYear, coverageByWeek, parseNorskTippingV2, parseHeaderCsv,
   mergeDrawsByDate, windowsNewestFirst, expectedDrawsInWeek, isoDateKey, drawsExpectedBetween,
-  estimateSpace, jackpotCombinations, binomial, ruleBreakdown, ruleCatalog, historicalImpact, diagnoseRejections, ruleStrictness, overlapAcceptance, halfWeights, expectedLowCount, deriveBestGuess, smallestCovering, excludedNumberSet
+  estimateSpace, jackpotCombinations, binomial, ruleBreakdown, ruleCatalog, historicalImpact, diagnoseRejections, ruleStrictness, overlapAcceptance, halfWeights, expectedLowCount, deriveBestGuess, smallestCovering
 } = vm.runInContext(
   `({ LOTTERIES, sampleDistinct, combinationKeys, longestConsecutiveRun, sumOf, countOdd,
       overlapCount, parseDrawsText, parseDraws, filterDrawsByYears, buildHistoryIndex,
@@ -43,7 +43,7 @@ const {
       drawsSinceLastSeen, softRuleFailures, estimatePassRate,
       isoWeekOf, isoWeekStart, isoWeeksInYear, coverageByWeek, parseNorskTippingV2, parseHeaderCsv,
       mergeDrawsByDate, windowsNewestFirst, expectedDrawsInWeek, isoDateKey, drawsExpectedBetween,
-      estimateSpace, jackpotCombinations, binomial, ruleBreakdown, ruleCatalog, historicalImpact, diagnoseRejections, ruleStrictness, overlapAcceptance, halfWeights, expectedLowCount, deriveBestGuess, smallestCovering, excludedNumberSet })`,
+      estimateSpace, jackpotCombinations, binomial, ruleBreakdown, ruleCatalog, historicalImpact, diagnoseRejections, ruleStrictness, overlapAcceptance, halfWeights, expectedLowCount, deriveBestGuess, smallestCovering })`,
   context
 );
 
@@ -182,6 +182,7 @@ function defaultCriteria(cfg) {
     oddEven: { enabled: true, minOdd: 2, maxOdd: cfg.mainPick - 2 },
     sumRange: { enabled: true, min: cfg.defaultSumMin, max: cfg.defaultSumMax },
     zoneSpread: { enabled: true, maxPerZone: 3, minPerZone: 0 },
+    zonesUsed: { enabled: false, min: 1, max: Math.ceil(cfg.mainMax / cfg.zoneSize) },
     parityRun: { enabled: true, value: 3 },
     maxArithmetic: { enabled: true, value: 4 },
     sameLastDigit: { enabled: true, max: 4 },
@@ -613,7 +614,7 @@ for (const cfg of [lotto, euro]) {
   assert(bd.steps.every((s) => s.solo >= s.cumulative - 1e-12), "breakdown: a rule alone keeps at least as much as the cumulative");
   const sp = estimateSpace(lotto, c, hx, 40000);
   assert(Math.abs(bd.share - sp.share) < 0.02, `breakdown: final share ${bd.share.toFixed(3)} agrees with estimateSpace ${sp.share.toFixed(3)}`);
-  assert(ruleCatalog(lotto, c, hx).length === 13 && ruleCatalog(lotto, c, hx).some((r) => !r.enabled), "breakdown: catalogue lists all 13 rules incl. disabled");
+  assert(ruleCatalog(lotto, c, hx).length === 14 && ruleCatalog(lotto, c, hx).some((r) => !r.enabled), "breakdown: catalogue lists all 14 rules incl. disabled");
   // exact small space: required numbers + maxRun
   const req = defaultCriteria(lotto);
   for (const k of ["oddEven", "sumRange", "zoneSpread", "parityRun", "maxArithmetic", "sameLastDigit", "sharedMultiple"]) req[k].enabled = false;
@@ -744,41 +745,45 @@ for (const cfg of [lotto, euro]) {
   assert(gh.settings["bias-half"] === true && gh.settings["bias-half-value"] > 0, "bestGuess: draws leaning high → positive slider (" + gh.settings["bias-half-value"] + ")");
 }
 
-/* ---- excluded zones ---- */
+/* ---- zones used per row ---- */
 {
   const hx = buildHistoryIndex([], 0);
-  const base = () => { const c = defaultCriteria(lotto); for (const k of ["maxRun", "oddEven", "sumRange", "zoneSpread", "parityRun", "maxArithmetic", "sameLastDigit", "sharedMultiple"]) c[k].enabled = false; c.batchOverlap.enabled = false; c.historyExact.enabled = false; c.historySubset.enabled = false; return c; };
-  const c = base();
-  c.excludeZones = { enabled: true, zones: [2] };               // 21–30
-  const set = excludedNumberSet(lotto, c);
-  assert(set.size === 10 && set.has(21) && set.has(30) && !set.has(31), "zones: zone 3 removes 21–30");
-  const r = estimateSpace(lotto, c, hx);
-  assert(r.exact && r.count === binomial(24, 7), "zones: one zone excluded → exactly C(24,7) rows (" + r.count + ")");
-  c.excludeZones = { enabled: true, zones: [0, 1] };
-  assert(estimateSpace(lotto, c, hx).count === binomial(14, 7), "zones: two zones excluded → C(14,7)");
-  c.excludeZones = { enabled: true, zones: [0, 1, 2] };
-  assert(!estimateSpace(lotto, c, hx).feasible, "zones: three of four Lotto zones leave only 4 numbers → conflict");
-  c.excludeNumbers = { enabled: true, numbers: [1] }; c.excludeZones = { enabled: true, zones: [0] };
-  assert(excludedNumberSet(lotto, c).size === 10, "zones: overlaps with the never-pick list are merged");
-  // rows never contain an excluded zone
-  const g = base(); g.excludeZones = { enabled: true, zones: [0, 3] };
-  const rows = generateTickets(10, lotto, g, hx).tickets;
-  assert(rows.length === 10 && rows.every((t) => t.mains.every((n) => n >= 11 && n <= 30)), "zones: generated rows avoid the excluded zones");
-  // conflicts
-  const rq = base(); rq.excludeZones = { enabled: true, zones: [0] }; rq.requireNumbers = { enabled: true, numbers: [5] };
-  assert(generateTickets(1, lotto, rq, hx).warnings.some((w) => /required number/.test(w)), "zones: required number inside an excluded zone is reported");
-  const zs = base(); zs.excludeZones = { enabled: true, zones: [1] }; zs.zoneSpread = { enabled: true, maxPerZone: 3, minPerZone: 1 };
-  assert(!estimateSpace(lotto, zs, hx).feasible, "zones: min-per-zone contradicts an excluded zone");
-  const bd = base(); bd.birthdayBias.enabled = true; bd.excludeZones = { enabled: true, zones: [3] };
-  assert(!estimateSpace(lotto, bd, hx).feasible, "zones: birthday-bias cannot be met without 32–34");
-  // Eurojackpot has five zones
-  const e = defaultCriteria(euro); for (const k of ["maxRun", "oddEven", "sumRange", "zoneSpread", "parityRun", "maxArithmetic", "sameLastDigit", "sharedMultiple"]) e[k].enabled = false;
-  e.batchOverlap.enabled = false; e.historyExact.enabled = false; e.historySubset.enabled = false; e.excludeZones = { enabled: true, zones: [4, 3] };
-  assert(estimateSpace(euro, e, hx).count === binomial(30, 5) * 66, "zones: Eurojackpot two zones → C(30,5) × 66 stars");
-  // backtest counts draws touching an excluded zone
-  const draws = [[1, 12, 25, 31, 33, 34, 20], [2, 13, 14, 15, 16, 17, 18], [21, 22, 23, 24, 25, 26, 27]].map((m, i) => ({ date: new Date(2024, 0, 1 + i * 7), mains: m.slice().sort((a, b) => a - b), stars: [] }));
-  const bt = historicalImpact(lotto, (() => { const b = base(); b.excludeZones = { enabled: true, zones: [3] }; return b; })(), draws);
-  assert(bt.rules.excludeZones && bt.rules.excludeZones.failed === 1 && bt.rules.excludeZones.tested === 3, "zones: backtest — 1 of 3 past draws used the excluded zone 31–34");
+  // Small game: 3 of 12 with zones of 4 → 3 zones, 220 rows — enumerated exactly.
+  const mini = { ...lotto, mainPick: 3, mainMax: 12, zoneSize: 4, starPick: 0, starMax: 0, defaultSumMin: 0, defaultSumMax: 999 };
+  const mk = (min, max) => {
+    const c = defaultCriteria(mini);
+    for (const k of ["maxRun", "oddEven", "sumRange", "zoneSpread", "parityRun", "maxArithmetic", "sameLastDigit", "sharedMultiple"]) c[k].enabled = false;
+    c.batchOverlap.enabled = false; c.historyExact.enabled = false; c.historySubset.enabled = false;
+    c.zonesUsed = { enabled: true, min, max };
+    return c;
+  };
+  const brute = (min, max) => { let n = 0; for (let a = 1; a <= 12; a++) for (let b = a + 1; b <= 12; b++) for (let c = b + 1; c <= 12; c++) { const z = new Set([a, b, c].map((x) => Math.floor((x - 1) / 4))).size; if (z >= min && z <= max) n++; } return n; };
+  for (const [mn, mx] of [[1, 1], [1, 2], [2, 2], [2, 3], [3, 3]]) {
+    const r = estimateSpace(mini, mk(mn, mx), hx);
+    assert(r.exact && r.count === brute(mn, mx), `zonesUsed ${mn}–${mx}: exact count ${r.count} equals brute force ${brute(mn, mx)}`);
+  }
+  assert(softRuleFailures([1, 2, 3, 4, 5, 6, 7], lotto, { ...defaultCriteria(lotto), zonesUsed: { enabled: true, min: 2, max: 3 } }, false).some((f) => /zones used/.test(f)), "zonesUsed: a row in one zone fails 2–3 and is named");
+  assert(softRuleFailures([1, 11, 21, 31, 2, 12, 22], lotto, { ...defaultCriteria(lotto), zonesUsed: { enabled: true, min: 1, max: 3 } }, false).some((f) => /zones used/.test(f)), "zonesUsed: touching all four zones fails max 3");
+  // Generated rows obey it
+  const c = defaultCriteria(lotto); c.zoneSpread.enabled = false; c.zonesUsed = { enabled: true, min: 2, max: 2 };
+  // (with the default "max 3 per zone", 2 zones hold only 6 of 7 numbers — reported as a conflict, tested below)
+  const rows = generateTickets(10, lotto, c, hx).tickets.filter((t) => !t.relaxed);
+  assert(rows.length >= 9 && rows.every((t) => new Set(t.mains.map((n) => Math.floor((n - 1) / 10))).size === 2), "zonesUsed: generated rows touch exactly 2 zones");
+  // Conflicts
+  const bad = (z, extra) => { const x = defaultCriteria(lotto); x.zonesUsed = { enabled: true, ...z }; Object.assign(x, extra || {}); return estimateSpace(lotto, x, hx); };
+  assert(!bad({ min: 3, max: 2 }).feasible, "zonesUsed: min > max reported");
+  assert(!bad({ min: 5, max: 5 }).feasible, "zonesUsed: more zones than exist reported");
+  assert(!bad({ min: 1, max: 2 }).feasible, "zonesUsed: 2 zones × the default max 3 per zone cannot hold 7 numbers");
+  assert(!bad({ min: 1, max: 1 }, { zoneSpread: { enabled: true, maxPerZone: 3, minPerZone: 0 } }).feasible, "zonesUsed: 1 zone × 3 per zone cannot hold 7 numbers");
+  assert(!bad({ min: 1, max: 2 }, { zoneSpread: { enabled: true, maxPerZone: 5, minPerZone: 1 } }).feasible, "zonesUsed: contradicts 'every zone must be used'");
+  assert(!bad({ min: 1, max: 1 }, { requireNumbers: { enabled: true, numbers: [1, 15] } }).feasible, "zonesUsed: required numbers already touch too many zones");
+  // Strictness is reported
+  const st = ruleStrictness(lotto, (() => { const x = defaultCriteria(lotto); x.zoneSpread.enabled = false; x.zonesUsed = { enabled: true, min: 1, max: 2 }; return x; })(), hx, 4000);
+  assert(st.zonesUsed > 0.5 && st.zonesUsed < 1, "zonesUsed: max 2 of 4 zones is a strict rule (" + st.zonesUsed.toFixed(2) + ")");
+  // Best guess includes it
+  const hist = []; for (let i = 0; i < 60; i++) { const m = i % 2 ? [1 + (i % 3), 5 + (i % 3), 12 + (i % 3), 17 + (i % 3), 22 + (i % 4), 27 + (i % 3), 31] : [2 + (i % 3), 6 + (i % 3), 13 + (i % 3), 18 + (i % 3), 23 + (i % 3), 26 + (i % 3), 29]; hist.push({ date: new Date(2020, 0, 1 + i * 7), mains: m.slice().sort((a, b) => a - b), stars: [] }); }
+  const g = deriveBestGuess(lotto, hist, 0.95);
+  assert(g && g.settings["crit-zonesused"] === true && g.settings["crit-zonesused-min"] === 3 && g.settings["crit-zonesused-max"] === 4, "bestGuess: zones used 3–4 from past draws (" + (g && g.settings["crit-zonesused-min"] + "–" + g.settings["crit-zonesused-max"]) + ")");
 }
 
 /* ---- windows ---- */

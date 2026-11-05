@@ -143,6 +143,7 @@
     "crit-oddeven", "crit-oddeven-min", "crit-oddeven-max",
     "crit-sum", "crit-sum-min", "crit-sum-max",
     "crit-zone", "crit-zone-max", "crit-zone-min",
+    "crit-zonesused", "crit-zonesused-min", "crit-zonesused-max",
     "crit-parity", "crit-parity-value",
     "crit-arith", "crit-arith-value",
     "ap-lastdigit", "ap-lastdigit-max",
@@ -154,7 +155,6 @@
     "bias-half", "bias-half-value",
     "crit-overlap", "crit-overlap-max",
     "crit-exclude", "crit-exclude-list",
-    "crit-zones", "crit-zones-list",
     "crit-require", "crit-require-list",
     "hist-window", "hist-window-years",
     "hist-exact",
@@ -193,37 +193,23 @@
       .filter((n, i, arr) => arr.indexOf(n) === i);
   }
 
-  function parseZoneList(text, cfg) {
-    const zones = lotteryZoneCount(cfg);
-    return (text.match(/\d+/g) || []).map((t) => parseInt(t, 10)).filter((z, i, arr) => z >= 0 && z < zones && arr.indexOf(z) === i).slice(0, 3);
-  }
-
-  function zoneRangeText(cfg, z) {
-    return `${z * cfg.zoneSize + 1}–${Math.min(cfg.mainMax, (z + 1) * cfg.zoneSize)}`;
-  }
-
-  /** Build the zone checkboxes for the active lottery and keep at most three ticked. */
-  function renderZoneChips(cfg, reset) {
-    const hidden = $("#crit-zones-list");
-    if (reset) hidden.value = "";
-    const selected = parseZoneList(hidden.value, cfg);
-    hidden.value = selected.join(",");
-    const wrap = $("#zone-chips");
+  /** Strip showing the zones of the active lottery and how many a row may touch. */
+  function renderZonesDemo() {
+    const cfg = LOTTERIES[state.lotteryId];
+    const wrap = $("#zones-demo");
+    if (!wrap) return;
     wrap.innerHTML = "";
     for (let z = 0; z < lotteryZoneCount(cfg); z++) {
-      const label = document.createElement("label");
-      label.className = "zone-pill";
-      label.innerHTML = `<input type="checkbox" data-zone="${z}"${selected.includes(z) ? " checked" : ""} aria-label="Exclude numbers ${zoneRangeText(cfg, z)}"><span>${zoneRangeText(cfg, z)}</span>`;
-      wrap.appendChild(label);
+      const d = document.createElement("div");
+      d.className = "zd";
+      d.innerHTML = `${z * cfg.zoneSize + 1}–${Math.min(cfg.mainMax, (z + 1) * cfg.zoneSize)}<small>zone ${z + 1}</small>`;
+      wrap.appendChild(d);
     }
-    syncZoneChips();
-  }
-
-  function syncZoneChips() {
-    const boxes = [...document.querySelectorAll("#zone-chips input")];
-    const checked = boxes.filter((b) => b.checked);
-    for (const b of boxes) b.disabled = !b.checked && checked.length >= 3;
-    $("#zone-count").textContent = `${checked.length} of 3`;
+    const zc = lotteryZoneCount(cfg);
+    const lo = Math.min(intVal("crit-zonesused-min", 1), intVal("crit-zonesused-max", 3));
+    const hi = Math.max(intVal("crit-zonesused-min", 1), intVal("crit-zonesused-max", 3));
+    $("#zones-hint").textContent = `${cfg.name} has ${zc} zones of ten. Each row may touch ${lo === hi ? "exactly " + lo : lo + " to " + hi} of them` +
+      (hi < zc ? ` — so at least ${zc - hi} zone${zc - hi === 1 ? "" : "s"} stay${zc - hi === 1 ? "s" : ""} empty in every row.` : ".");
   }
 
   function intVal(id, fallback) {
@@ -249,6 +235,11 @@
         maxPerZone: intVal("crit-zone-max", 3),
         minPerZone: intVal("crit-zone-min", 0)
       },
+      zonesUsed: {
+        enabled: $("#crit-zonesused").checked,
+        min: Math.min(intVal("crit-zonesused-min", 1), intVal("crit-zonesused-max", 3)),
+        max: Math.max(intVal("crit-zonesused-min", 1), intVal("crit-zonesused-max", 3))
+      },
       parityRun: { enabled: $("#crit-parity").checked, value: intVal("crit-parity-value", 3) },
       maxArithmetic: { enabled: $("#crit-arith").checked, value: intVal("crit-arith-value", 3) },
       sameLastDigit: { enabled: $("#ap-lastdigit").checked, max: intVal("ap-lastdigit-max", 3) },
@@ -262,10 +253,6 @@
       excludeNumbers: {
         enabled: $("#crit-exclude").checked,
         numbers: parseNumberList($("#crit-exclude-list").value, cfg.mainMax)
-      },
-      excludeZones: {
-        enabled: $("#crit-zones").checked,
-        zones: parseZoneList($("#crit-zones-list").value, cfg)
       },
       requireNumbers: {
         enabled: $("#crit-require").checked,
@@ -337,6 +324,13 @@
     $("#hist-subset-size").max = cfg.mainPick;
     if (intVal("hist-subset-size", 4) > cfg.mainPick) $("#hist-subset-size").value = cfg.mainPick - 1;
 
+    // Zones used: bounded by how many zones this lottery has.
+    const zc = lotteryZoneCount(cfg);
+    for (const id of ["crit-zonesused-min", "crit-zonesused-max"]) $("#" + id).max = zc;
+    if (intVal("crit-zonesused-max", 3) > zc) $("#crit-zonesused-max").value = zc;
+    if (intVal("crit-zonesused-min", 1) > zc) $("#crit-zonesused-min").value = 1;
+    renderZonesDemo();
+
     // Anti-pattern bounds depend on how many numbers a row holds.
     for (const id of ["crit-arith-value", "ap-lastdigit-max", "ap-multiple-max", "ap-lowhigh-low", "ap-lowhigh-high"]) {
       $("#" + id).max = cfg.mainPick;
@@ -344,8 +338,6 @@
     if (intVal("crit-arith-value", 3) > cfg.mainPick) $("#crit-arith-value").value = cfg.mainPick;
     if (intVal("ap-lastdigit-max", 3) > cfg.mainPick) $("#ap-lastdigit-max").value = cfg.mainPick;
     if (intVal("ap-multiple-max", 4) > cfg.mainPick) $("#ap-multiple-max").value = cfg.mainPick;
-
-    renderZoneChips(cfg, changed);
 
     // Reuse range spans 0..mainPick for this lottery.
     $("#reuse-min").max = cfg.mainPick;
@@ -1465,7 +1457,7 @@
       label: "Pure random",
       desc: "No style rules at all — every combination is equally likely, like Norsk Tipping's own quick pick. Rows are still never duplicated.",
       apply: () => ({
-        "crit-maxrun": false, "crit-oddeven": false, "crit-sum": false, "crit-zone": false,
+        "crit-maxrun": false, "crit-oddeven": false, "crit-sum": false, "crit-zone": false, "crit-zonesused": false,
         "crit-parity": false, "crit-arith": false, "ap-lastdigit": false, "ap-multiple": false,
         "ap-lowhigh": false, "crit-birthday": false, "bias-overdue": false, "bias-cold": false, "bias-half": false,
         "crit-overlap": false
@@ -1664,7 +1656,7 @@
   const HIST_RULE_BOX = {
     maxRun: "crit-maxrun", oddEven: "crit-oddeven", sumRange: "crit-sum", zoneSpread: "crit-zone", parityRun: "crit-parity",
     maxArithmetic: "crit-arith", sameLastDigit: "ap-lastdigit", sharedMultiple: "ap-multiple", lowHigh: "ap-lowhigh",
-    birthdayBias: "crit-birthday", reuseLast: "reuse-enabled", excludeNumbers: "crit-exclude", excludeZones: "crit-zones", requireNumbers: "crit-require",
+    birthdayBias: "crit-birthday", zonesUsed: "crit-zonesused", reuseLast: "reuse-enabled", excludeNumbers: "crit-exclude", requireNumbers: "crit-require",
     historyExact: "hist-exact", historySubset: "hist-subset", batchOverlap: "crit-overlap"
   };
   let histEls = null;
@@ -1848,7 +1840,7 @@
 
   const RULE_TARGET = {
     maxRun: ["balance", "crit-maxrun"], oddEven: ["balance", "crit-oddeven"], sumRange: ["balance", "crit-sum"],
-    zoneSpread: ["balance", "crit-zone"], parityRun: ["balance", "crit-parity"],
+    zoneSpread: ["balance", "crit-zone"], zonesUsed: ["balance", "crit-zonesused"], parityRun: ["balance", "crit-parity"],
     maxArithmetic: ["antipatterns", "crit-arith"], sameLastDigit: ["antipatterns", "ap-lastdigit"],
     sharedMultiple: ["antipatterns", "ap-multiple"], lowHigh: ["antipatterns", "ap-lowhigh"], birthdayBias: ["antipatterns", "crit-birthday"],
     reuseLast: [null, "reuse-enabled"], historyExact: ["history", "hist-exact"], historySubset: ["history", "hist-subset"]
@@ -1963,8 +1955,7 @@
     fRows.push(bar("start", "All possible rows", "no rules", 1, null, fmtInt(total)));
     let base = bd.constrainedShare;
     if (base < 0.99999) {
-      const zonesTxt = criteria.excludeZones.enabled && criteria.excludeZones.zones.length ? "zones " + criteria.excludeZones.zones.map((z) => zoneRangeText(cfg, z)).join(", ") + " removed" : "";
-      fRows.push(bar("", "Excluded zones / numbers", [zonesTxt, criteria.excludeNumbers.enabled && criteria.excludeNumbers.numbers.length ? "never " + criteria.excludeNumbers.numbers.join(", ") : "", criteria.requireNumbers.enabled && criteria.requireNumbers.numbers.length ? "always " + criteria.requireNumbers.numbers.join(", ") : ""].filter(Boolean).join(" · "), base, null, fmtInt(base * total)));
+      fRows.push(bar("", "Excluded / required numbers", `${criteria.excludeNumbers.enabled && criteria.excludeNumbers.numbers.length ? "never " + criteria.excludeNumbers.numbers.join(", ") : ""}${criteria.requireNumbers.enabled && criteria.requireNumbers.numbers.length ? " always " + criteria.requireNumbers.numbers.join(", ") : ""}`.trim(), base, null, fmtInt(base * total)));
     }
     const minSolo = Math.min(...bd.steps.map((s) => s.solo), 1);
     for (const s of bd.steps) {
@@ -2034,7 +2025,7 @@
     const max = Math.max(1, ...freq.slice(1));
     const min = Math.min(...freq.slice(1));
     const span = Math.max(1, max - min);
-    const exc = excludedNumberSet(cfg, criteria);
+    const exc = new Set(criteria.excludeNumbers.enabled ? criteria.excludeNumbers.numbers : []);
     const req = new Set(criteria.requireNumbers.enabled ? criteria.requireNumbers.numbers : []);
     const board = $("#board");
     board.innerHTML = "";
@@ -2071,7 +2062,6 @@
     const ex = criteria.excludeNumbers.enabled ? criteria.excludeNumbers.numbers : [];
     const rq = criteria.requireNumbers.enabled ? criteria.requireNumbers.numbers : [];
     out.push(list("Excluded numbers", ex.length ? ex.join(", ") : "none"));
-    out.push(list("Excluded zones", criteria.excludeZones.enabled && criteria.excludeZones.zones.length ? criteria.excludeZones.zones.map((z) => zoneRangeText(cfg, z)).join(", ") : "none"));
     out.push(list("Required numbers", rq.length ? rq.join(", ") : "none"));
     out.push(list("Row overlap limit", criteria.batchOverlap.enabled ? `≤ ${criteria.batchOverlap.maxShared} shared` : "off"));
     $("#dash-data").innerHTML = out.join("");
@@ -2201,6 +2191,7 @@
     $("#switch-lotto").addEventListener("click", () => { switchLottery("lotto"); maybeAutoUpdate(); });
     $("#switch-eurojackpot").addEventListener("click", () => { switchLottery("eurojackpot"); maybeAutoUpdate(); });
 
+    for (const id of ["crit-zonesused-min", "crit-zonesused-max"]) document.getElementById(id).addEventListener("input", renderZonesDemo);
     for (const id of ["bias-overdue-strength", "bias-cold-strength", "bias-half-value"]) {
       document.getElementById(id).addEventListener("input", syncBiasOutputs);
     }
@@ -2311,15 +2302,6 @@
     $("#history-download").addEventListener("click", downloadDataset);
     $("#coverage-fetch").addEventListener("click", fetchHistoryChain);
     $("#space-to-dashboard").addEventListener("click", () => setView("dashboard"));
-    $("#zone-chips").addEventListener("change", (e) => {
-      const boxes = [...document.querySelectorAll("#zone-chips input")];
-      const picked = boxes.filter((b) => b.checked).map((b) => parseInt(b.dataset.zone, 10));
-      const hidden = $("#crit-zones-list");
-      hidden.value = picked.join(",");
-      syncZoneChips();
-      if (picked.length && !$("#crit-zones").checked) { $("#crit-zones").checked = true; syncCriterionBodies(); }
-      hidden.dispatchEvent(new Event("input", { bubbles: true }));
-    });
     const onRuleAction = (e) => {
       const off = e.target.closest("[data-off]");
       const edit = e.target.closest("[data-edit]");

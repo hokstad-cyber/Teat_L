@@ -7,6 +7,7 @@
  *   oddEven:       { enabled, minOdd, maxOdd }
  *   sumRange:      { enabled, min, max }
  *   zoneSpread:    { enabled, maxPerZone, minPerZone }
+ *   zonesUsed:     { enabled, min, max }  // how many different zones of ten a row may touch
  *   parityRun:     { enabled, value }   // longest allowed odd-or-even streak
  *   maxArithmetic: { enabled, value }   // longest allowed equal-gap progression
  *   sameLastDigit: { enabled, max }     // max numbers sharing a final digit
@@ -14,7 +15,6 @@
  *   lowHigh:       { enabled, minLow, minHigh } // balance low vs high half
  *   birthdayBias:  { enabled }          // require at least one number > 31
  *   excludeNumbers:{ enabled, numbers: number[] }
- *   excludeZones:  { enabled, zones: number[] }  // zone indexes (0 = 1–10), at most 3
  *   requireNumbers:{ enabled, numbers: number[] }
  *   batchOverlap:  { enabled, maxShared }  // vs already generated rows
  *   historyExact:  { enabled }
@@ -26,22 +26,9 @@
 
 const MAX_ATTEMPTS_PER_ROW = 8000;
 
-/** Numbers removed from the pool: the "never pick" list plus every number in an excluded zone. */
-function excludedNumberSet(cfg, criteria) {
-  const s = new Set(criteria.excludeNumbers.enabled ? criteria.excludeNumbers.numbers : []);
-  const ez = criteria.excludeZones;
-  if (ez && ez.enabled) {
-    for (const z of ez.zones || []) {
-      for (let n = z * cfg.zoneSize + 1; n <= Math.min(cfg.mainMax, (z + 1) * cfg.zoneSize); n++) s.add(n);
-    }
-  }
-  return s;
-}
-
 function validateCriteriaFeasibility(cfg, criteria) {
   const problems = [];
-  const excludedSet = excludedNumberSet(cfg, criteria);
-  const excluded = [...excludedSet];
+  const excluded = criteria.excludeNumbers.enabled ? criteria.excludeNumbers.numbers : [];
   const required = criteria.requireNumbers.enabled ? criteria.requireNumbers.numbers : [];
   const poolSize = cfg.mainMax - new Set(excluded).size;
   if (poolSize < cfg.mainPick) {
@@ -96,6 +83,28 @@ function validateCriteriaFeasibility(cfg, criteria) {
     if (minLow > lowSize) problems.push(`Low/high balance: the low half (1–${lowSize}) cannot supply ${minLow} numbers.`);
     if (minHigh > highSize) problems.push(`Low/high balance: the high half (${half + 1}–${cfg.mainMax}) cannot supply ${minHigh} numbers.`);
   }
+  if (criteria.zonesUsed && criteria.zonesUsed.enabled) {
+    const zu = criteria.zonesUsed;
+    const zoneCount = lotteryZoneCount(cfg);
+    const sizes = [];
+    for (let z = 0; z < zoneCount; z++) sizes.push(Math.min(cfg.zoneSize, cfg.mainMax - z * cfg.zoneSize));
+    sizes.sort((a, b) => b - a);
+    if (zu.min > zu.max) problems.push("Zones used: minimum is greater than maximum.");
+    else {
+      if (zu.min > zoneCount) problems.push(`Zones used: there are only ${zoneCount} zones, so a row cannot touch ${zu.min}.`);
+      if (zu.min > cfg.mainPick) problems.push(`Zones used: a row of ${cfg.mainPick} numbers cannot touch ${zu.min} different zones.`);
+      const capacity = sizes.slice(0, Math.min(zu.max, zoneCount)).reduce((a, b) => a + b, 0);
+      if (capacity < cfg.mainPick) problems.push(`Zones used: the ${zu.max} largest zone(s) hold only ${capacity} numbers, but a row needs ${cfg.mainPick}.`);
+      if (criteria.zoneSpread.enabled && zu.max * criteria.zoneSpread.maxPerZone < cfg.mainPick) {
+        problems.push(`Zones used: at most ${zu.max} zone(s) with at most ${criteria.zoneSpread.maxPerZone} per zone cannot hold ${cfg.mainPick} numbers.`);
+      }
+      if (criteria.zoneSpread.enabled && (criteria.zoneSpread.minPerZone || 0) > 0 && zu.max < zoneCount) {
+        problems.push(`Zones used: "Spread across zones" wants numbers in every zone, but you allow only ${zu.max} of ${zoneCount} zones.`);
+      }
+      const reqZones = new Set(required.map((n) => zoneOfNumber(cfg, n)));
+      if (reqZones.size > zu.max) problems.push(`Zones used: your required numbers already touch ${reqZones.size} zones, more than the ${zu.max} allowed.`);
+    }
+  }
   if (criteria.birthdayBias.enabled && cfg.mainMax <= 31) {
     problems.push("Birthday-bias criterion needs numbers above 31, which this lottery does not have.");
   }
@@ -116,36 +125,6 @@ function validateCriteriaFeasibility(cfg, criteria) {
       }
       if (r.min > availFromLast) {
         problems.push(`Reuse from last draw: only ${availFromLast} of the last draw's numbers are available (after exclusions), fewer than the minimum of ${r.min}.`);
-      }
-    }
-  }
-  const ez = criteria.excludeZones && criteria.excludeZones.enabled ? criteria.excludeZones.zones : [];
-  if (ez.length) {
-    const zoneCount = lotteryZoneCount(cfg);
-    const zoneLabel = (z) => `${z * cfg.zoneSize + 1}–${Math.min(cfg.mainMax, (z + 1) * cfg.zoneSize)}`;
-    if (ez.length > 3) problems.push("Excluded zones: you can exclude at most 3 zones.");
-    if (criteria.zoneSpread.enabled && (criteria.zoneSpread.minPerZone || 0) > 0) {
-      problems.push(`Excluded zones: "Spread across zones" requires at least ${criteria.zoneSpread.minPerZone} number(s) in every zone, but zone ${zoneLabel(ez[0])} is excluded.`);
-    }
-    const inZone = required.filter((n) => excludedSet.has(n) && ez.includes(zoneOfNumber(cfg, n)));
-    if (inZone.length) problems.push(`Excluded zones: required number(s) ${inZone.join(", ")} lie in an excluded zone.`);
-    if (criteria.birthdayBias.enabled) {
-      let any = false;
-      for (let n = 32; n <= cfg.mainMax; n++) if (!excludedSet.has(n)) any = true;
-      if (!any) problems.push("Excluded zones: no number above 31 is left for the birthday-bias rule.");
-    }
-    if (criteria.lowHigh && criteria.lowHigh.enabled) {
-      const half = Math.ceil(cfg.mainMax / 2);
-      let lowAvail = 0;
-      let highAvail = 0;
-      for (let n = 1; n <= cfg.mainMax; n++) if (!excludedSet.has(n)) (n <= half ? lowAvail++ : highAvail++);
-      if (criteria.lowHigh.minLow > lowAvail) problems.push(`Excluded zones: only ${lowAvail} lower-half number(s) are left, fewer than the ${criteria.lowHigh.minLow} required.`);
-      if (criteria.lowHigh.minHigh > highAvail) problems.push(`Excluded zones: only ${highAvail} higher-half number(s) are left, fewer than the ${criteria.lowHigh.minHigh} required.`);
-    }
-    if (criteria.zoneSpread.enabled) {
-      const remaining = zoneCount - new Set(ez).size;
-      if (remaining * criteria.zoneSpread.maxPerZone < cfg.mainPick) {
-        problems.push(`Excluded zones: with ${remaining} zone(s) left and at most ${criteria.zoneSpread.maxPerZone} per zone, ${cfg.mainPick} numbers do not fit.`);
       }
     }
   }
@@ -185,6 +164,14 @@ function softRuleFailures(mains, cfg, criteria, firstOnly) {
     const min = criteria.zoneSpread.minPerZone || 0;
     if (counts.some((c) => c > criteria.zoneSpread.maxPerZone) || (min > 0 && counts.some((c) => c < min))) {
       if (fail("zone spread")) return out;
+    }
+  }
+  if (criteria.zonesUsed && criteria.zonesUsed.enabled) {
+    const used = new Set();
+    for (const n of mains) used.add(zoneOfNumber(cfg, n));
+    if (used.size < criteria.zonesUsed.min || used.size > criteria.zonesUsed.max) {
+      const { min, max } = criteria.zonesUsed;
+      if (fail(`${min === max ? min : min + "–" + max} zones used`)) return out;
     }
   }
   if (criteria.parityRun.enabled && longestParityRun(mains) > criteria.parityRun.value) {
@@ -274,7 +261,7 @@ function chooseReuseCount(reuseLast, required, lastPoolSize, otherPoolSize, need
  * infeasible.
  */
 function makeRowSampler(cfg, criteria, weights) {
-  const excluded = excludedNumberSet(cfg, criteria);
+  const excluded = new Set(criteria.excludeNumbers.enabled ? criteria.excludeNumbers.numbers : []);
   const required = criteria.requireNumbers.enabled ? criteria.requireNumbers.numbers.slice() : [];
   const pool = [];
   for (let n = 1; n <= cfg.mainMax; n++) {
@@ -414,7 +401,7 @@ function forEachCombination(pool, k, fn) {
 }
 
 function anySoftRuleEnabled(criteria) {
-  return ["maxRun", "oddEven", "sumRange", "zoneSpread", "parityRun", "maxArithmetic", "sameLastDigit", "sharedMultiple", "lowHigh", "birthdayBias"]
+  return ["maxRun", "oddEven", "sumRange", "zoneSpread", "zonesUsed", "parityRun", "maxArithmetic", "sameLastDigit", "sharedMultiple", "lowHigh", "birthdayBias"]
     .some((k) => criteria[k] && criteria[k].enabled);
 }
 
@@ -438,7 +425,7 @@ function estimateSpace(cfg, criteria, historyIndex, samples) {
   const total = jackpotCombinations(cfg);
   if (problems.length) return { feasible: false, problems, total, count: 0, share: 0, lo: 0, hi: 0, exact: true };
 
-  const excluded = excludedNumberSet(cfg, criteria);
+  const excluded = new Set(criteria.excludeNumbers.enabled ? criteria.excludeNumbers.numbers : []);
   const required = criteria.requireNumbers.enabled ? criteria.requireNumbers.numbers.slice() : [];
   const pool = [];
   for (let n = 1; n <= cfg.mainMax; n++) if (!excluded.has(n) && !required.includes(n)) pool.push(n);
@@ -481,7 +468,7 @@ function estimateSpace(cfg, criteria, historyIndex, samples) {
 
 /* ======================= Rule catalogue & funnel ======================= */
 
-const SOFT_RULE_KEYS = ["maxRun", "oddEven", "sumRange", "zoneSpread", "parityRun", "maxArithmetic", "sameLastDigit", "sharedMultiple", "lowHigh", "birthdayBias"];
+const SOFT_RULE_KEYS = ["maxRun", "oddEven", "sumRange", "zoneSpread", "zonesUsed", "parityRun", "maxArithmetic", "sameLastDigit", "sharedMultiple", "lowHigh", "birthdayBias"];
 
 /**
  * Every rule the app knows, in a fixed order, with a human label that
@@ -497,6 +484,7 @@ function ruleCatalog(cfg, c, historyIndex) {
     R("oddEven", "Number balance", "Odd / even balance", `${c.oddEven.minOdd}–${c.oddEven.maxOdd} odd numbers`, c.oddEven.enabled),
     R("sumRange", "Number balance", "Sum of numbers", `Sum ${c.sumRange.min}–${c.sumRange.max}`, c.sumRange.enabled),
     R("zoneSpread", "Number balance", "Spread across zones", `${c.zoneSpread.minPerZone ? c.zoneSpread.minPerZone + "–" : "≤ "}${c.zoneSpread.maxPerZone} per zone of ten`, c.zoneSpread.enabled),
+    R("zonesUsed", "Number balance", "Zones used per row", `Numbers from ${(c.zonesUsed || {}).min === (c.zonesUsed || {}).max ? (c.zonesUsed || {}).min : ((c.zonesUsed || {}).min + "–" + (c.zonesUsed || {}).max)} different zones of ten`, c.zonesUsed && c.zonesUsed.enabled),
     R("parityRun", "Number balance", "Odd/even streaks", `Streak of same parity ≤ ${c.parityRun.value}`, c.parityRun.enabled),
     R("maxArithmetic", "Popular patterns", "Arithmetic progression", `Equal-gap run ≤ ${c.maxArithmetic.value}`, c.maxArithmetic.enabled),
     R("sameLastDigit", "Popular patterns", "Same last digit", `≤ ${c.sameLastDigit.max} ending in one digit`, c.sameLastDigit.enabled),
@@ -533,7 +521,7 @@ function ruleBreakdown(cfg, criteria, historyIndex, samples) {
   const catalog = ruleCatalog(cfg, criteria, historyIndex);
   if (problems.length) return { feasible: false, problems, total, catalog, steps: [] };
 
-  const excluded = excludedNumberSet(cfg, criteria);
+  const excluded = new Set(criteria.excludeNumbers.enabled ? criteria.excludeNumbers.numbers : []);
   const required = criteria.requireNumbers.enabled ? criteria.requireNumbers.numbers.slice() : [];
   const pool = [];
   for (let n = 1; n <= cfg.mainMax; n++) if (!excluded.has(n) && !required.includes(n)) pool.push(n);
@@ -604,19 +592,16 @@ function ruleBreakdown(cfg, criteria, historyIndex, samples) {
 function historicalImpact(cfg, criteria, draws) {
   const sorted = draws.slice().sort((a, b) => (a.date ? a.date.getTime() : -Infinity) - (b.date ? b.date.getTime() : -Infinity));
   const only = {};
-  for (const k of SOFT_RULE_KEYS) only[k] = criteriaOnly(criteria, k);
+  const softKeys = SOFT_RULE_KEYS.filter((k) => criteria[k]);
+  for (const k of softKeys) only[k] = criteriaOnly(criteria, k);
   const exc = criteria.excludeNumbers.numbers || [];
   const req = criteria.requireNumbers.numbers || [];
   const reuse = criteria.reuseLast;
   const rules = {};
   const add = (id, enabled) => (rules[id] = { tested: 0, failed: 0, enabled: !!enabled });
-  for (const k of SOFT_RULE_KEYS) add(k, criteria[k].enabled);
+  for (const k of softKeys) add(k, criteria[k].enabled);
   add("reuseLast", reuse && reuse.enabled);
   if (exc.length) add("excludeNumbers", criteria.excludeNumbers.enabled);
-  const zoneNums = new Set();
-  const ezs = criteria.excludeZones && criteria.excludeZones.zones ? criteria.excludeZones.zones : [];
-  for (const z of ezs) for (let n = z * cfg.zoneSize + 1; n <= Math.min(cfg.mainMax, (z + 1) * cfg.zoneSize); n++) zoneNums.add(n);
-  if (zoneNums.size) add("excludeZones", criteria.excludeZones.enabled);
   if (req.length) add("requireNumbers", criteria.requireNumbers.enabled);
 
   let allPass = 0;
@@ -625,7 +610,7 @@ function historicalImpact(cfg, criteria, draws) {
     const mains = d.mains;
     evaluated++;
     let passAll = true;
-    for (const k of SOFT_RULE_KEYS) {
+    for (const k of softKeys) {
       const fail = softRuleFailures(mains, cfg, only[k], true).length > 0;
       rules[k].tested++;
       if (fail) rules[k].failed++;
@@ -643,12 +628,6 @@ function historicalImpact(cfg, criteria, draws) {
       rules.excludeNumbers.tested++;
       if (fail) rules.excludeNumbers.failed++;
       if (fail && rules.excludeNumbers.enabled) passAll = false;
-    }
-    if (rules.excludeZones) {
-      const fail = mains.some((n) => zoneNums.has(n));
-      rules.excludeZones.tested++;
-      if (fail) rules.excludeZones.failed++;
-      if (fail && rules.excludeZones.enabled) passAll = false;
     }
     if (rules.requireNumbers) {
       const fail = !req.every((n) => mains.includes(n));
@@ -730,7 +709,7 @@ function ruleStrictness(cfg, criteria, historyIndex, samples) {
   if (validateCriteriaFeasibility(cfg, criteria).length) return {};
   const sampleRow = makeRowSampler(cfg, criteria, null);
   const hist = historyIndex && historyIndex.drawCount > 0;
-  const keys = SOFT_RULE_KEYS.slice();
+  const keys = SOFT_RULE_KEYS.filter((k) => criteria[k]);
   if (hist) keys.push("historyExact");
   if (hist && historyIndex.subsetSize > 0) keys.push("historySubset");
   const tests = keys.map((k) => {

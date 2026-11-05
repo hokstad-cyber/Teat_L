@@ -3,9 +3,9 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="build" content="708aaa9" />
+  <meta name="build" content="a90e613" />
   <title>LykkeTall — Smart Lottery Number Picker</title>
-  <link rel="stylesheet" href="styles.css?v=a8747b9b" />
+  <link rel="stylesheet" href="styles.css?v=3524c370" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='45' fill='%23e8336d'/><text x='50' y='64' font-size='44' text-anchor='middle' fill='white' font-family='Arial'>7</text></svg>" />
 </head>
 <body data-lottery="lotto">
@@ -137,6 +137,22 @@
           </div>
           <div class="criterion-body" data-for="crit-zone">
             <p class="mini-hint">Zones of ten: 1–10, 11–20, … A minimum above 0 forces every zone to be represented.</p>
+          </div>
+        </div>
+
+        <div class="criterion">
+          <label class="toggle">
+            <input type="checkbox" id="crit-zonesused" />
+            <span class="slider"></span>
+            <span class="toggle-label">Limit how many zones a row spreads over</span>
+          </label>
+          <div class="criterion-body two-col" data-for="crit-zonesused">
+            <label>Min zones used <input type="number" id="crit-zonesused-min" min="1" max="5" value="1" /></label>
+            <label>Max zones used <input type="number" id="crit-zonesused-max" min="1" max="5" value="3" /></label>
+          </div>
+          <div class="criterion-body" data-for="crit-zonesused">
+            <div class="zones-demo" id="zones-demo" aria-hidden="true"></div>
+            <p class="mini-hint" id="zones-hint">Zones are blocks of ten. A row that touches only 2–3 zones is more clustered; touching every zone is more spread out.</p>
           </div>
         </div>
 
@@ -335,20 +351,6 @@
             <label>Never pick these (comma separated)
               <input type="text" id="crit-exclude-list" placeholder="e.g. 13, 22" />
             </label>
-          </div>
-        </div>
-
-        <div class="criterion">
-          <label class="toggle">
-            <input type="checkbox" id="crit-zones" />
-            <span class="slider"></span>
-            <span class="toggle-label">Exclude number zones</span>
-          </label>
-          <div class="criterion-body" data-for="crit-zones">
-            <div class="zone-head"><span>Tick up to 3 zones to remove completely</span><output id="zone-count" class="zone-count">0 of 3</output></div>
-            <div id="zone-chips" class="zone-chips" role="group" aria-label="Zones to exclude"></div>
-            <input type="hidden" id="crit-zones-list" value="" />
-            <p class="mini-hint">Every number in a ticked zone is removed from the draw, so this shrinks the set of possible rows exactly. Zones are blocks of ten.</p>
           </div>
         </div>
 
@@ -728,9 +730,9 @@
 
   <script src="js/lotteries.js?v=296196c0"></script>
   <script src="js/util.js?v=c24053fd"></script>
-  <script src="js/history.js?v=7253e98a"></script>
+  <script src="js/history.js?v=dff7aecd"></script>
   <script src="js/crawler.js?v=320e4439"></script>
-  <script src="js/generator.js?v=b0e25ae0"></script>
-  <script src="js/app.js?v=a55c3647"></script>
+  <script src="js/generator.js?v=1393219f"></script>
+  <script src="js/app.js?v=71f5db11"></script>
 </body>
 </html>

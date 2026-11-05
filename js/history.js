@@ -610,6 +610,8 @@ function deriveBestGuess(cfg, draws, coverage) {
   const overlaps = [];
   for (let i = 1; i < sorted.length; i++) overlaps.push(overlapCount(sorted[i - 1].mains, sorted[i].mains));
 
+  const zonesUsedCounts = col((m) => new Set(m.map((n) => Math.floor((n - 1) / cfg.zoneSize))).size);
+  const [zuLo, zuHi] = central(zonesUsedCounts);
   const [oddLo, oddHi] = central(odds);
   const [sumLo, sumHi] = central(sums);
   const [lowLo] = central(lowCounts);
@@ -627,6 +629,8 @@ function deriveBestGuess(cfg, draws, coverage) {
   notes.push(`Sum of numbers: ${sumLo}–${sumHi}`);
   S["crit-zone"] = true; S["crit-zone-max"] = Math.max(1, smallestCovering(zoneMax, p)); S["crit-zone-min"] = 0;
   notes.push(`Most numbers in one zone of ten: ${S["crit-zone-max"]}`);
+  S["crit-zonesused"] = true; S["crit-zonesused-min"] = Math.max(1, zuLo); S["crit-zonesused-max"] = Math.min(zones, Math.max(zuHi, zuLo));
+  notes.push(`Different zones of ten used per draw: ${S["crit-zonesused-min"]}–${S["crit-zonesused-max"]} (of ${zones})`);
   S["crit-parity"] = true; S["crit-parity-value"] = Math.max(1, smallestCovering(parity, p));
   S["crit-arith"] = true; S["crit-arith-value"] = Math.max(2, smallestCovering(arith, p));
   notes.push(`Equal-gap progression: up to ${S["crit-arith-value"]}`);
