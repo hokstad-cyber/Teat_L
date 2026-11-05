@@ -431,3 +431,113 @@ function estimateSpace(cfg, criteria, historyIndex, samples) {
   const scale = constrained * starCombos;
   return result(p * scale, false, Math.max(0, center - half) * scale, Math.min(1, center + half) * scale);
 }
+
+/* ======================= Rule catalogue & funnel ======================= */
+
+const SOFT_RULE_KEYS = ["maxRun", "oddEven", "sumRange", "zoneSpread", "parityRun", "maxArithmetic", "sameLastDigit", "sharedMultiple", "lowHigh", "birthdayBias"];
+
+/**
+ * Every rule the app knows, in a fixed order, with a human label that
+ * includes its current parameters, a group and whether it is active now.
+ */
+function ruleCatalog(cfg, c, historyIndex) {
+  const half = Math.ceil(cfg.mainMax / 2);
+  const hist = historyIndex && historyIndex.drawCount > 0;
+  const lastOk = !!(c.reuseLast && c.reuseLast.numbers && c.reuseLast.numbers.length);
+  const R = (id, group, name, label, enabled, extra) => Object.assign({ id, group, name, label, enabled: !!enabled }, extra || {});
+  return [
+    R("maxRun", "Number balance", "Numbers in sequence", `At most ${c.maxRun.value} consecutive`, c.maxRun.enabled),
+    R("oddEven", "Number balance", "Odd / even balance", `${c.oddEven.minOdd}–${c.oddEven.maxOdd} odd numbers`, c.oddEven.enabled),
+    R("sumRange", "Number balance", "Sum of numbers", `Sum ${c.sumRange.min}–${c.sumRange.max}`, c.sumRange.enabled),
+    R("zoneSpread", "Number balance", "Spread across zones", `${c.zoneSpread.minPerZone ? c.zoneSpread.minPerZone + "–" : "≤ "}${c.zoneSpread.maxPerZone} per zone of ten`, c.zoneSpread.enabled),
+    R("parityRun", "Number balance", "Odd/even streaks", `Streak of same parity ≤ ${c.parityRun.value}`, c.parityRun.enabled),
+    R("maxArithmetic", "Popular patterns", "Arithmetic progression", `Equal-gap run ≤ ${c.maxArithmetic.value}`, c.maxArithmetic.enabled),
+    R("sameLastDigit", "Popular patterns", "Same last digit", `≤ ${c.sameLastDigit.max} ending in one digit`, c.sameLastDigit.enabled),
+    R("sharedMultiple", "Popular patterns", "Multiples of one number", `≤ ${c.sharedMultiple.max} multiples of 3, 5 or 7`, c.sharedMultiple.enabled),
+    R("lowHigh", "Popular patterns", "Low / high balance", `≥ ${c.lowHigh.minLow} in 1–${half}, ≥ ${c.lowHigh.minHigh} in ${half + 1}–${cfg.mainMax}`, c.lowHigh.enabled),
+    R("birthdayBias", "Popular patterns", "Avoid birthday bias", "At least one number above 31", c.birthdayBias.enabled),
+    R("reuseLast", "Last draw", "Reuse from last draw", `${c.reuseLast.min === c.reuseLast.max ? "Exactly " + c.reuseLast.min : c.reuseLast.min + "–" + c.reuseLast.max} number(s) from the last draw`, c.reuseLast.enabled && lastOk),
+    R("historyExact", "History", "Not a past winning row", "Never an exact past draw", c.historyExact.enabled && hist),
+    R("historySubset", "History", "No past combination", (historyIndex && historyIndex.subsetSize > 0 ? `No group of ${historyIndex.subsetSize} that was drawn together` : "No group that was drawn together in the past"), c.historySubset.enabled && hist && historyIndex && historyIndex.subsetSize > 0)
+  ];
+}
+
+function criteriaOnly(c, key) {
+  const o = JSON.parse(JSON.stringify(c));
+  for (const k of SOFT_RULE_KEYS) if (o[k]) o[k].enabled = false;
+  o.batchOverlap.enabled = false;
+  o.historyExact.enabled = false;
+  o.historySubset.enabled = false;
+  if (o.reuseLast) o.reuseLast.enabled = false;
+  if (key) o[key].enabled = true;
+  return o;
+}
+
+/**
+ * How each active rule narrows the space. One pass over the same uniform
+ * rows estimateSpace uses (exact enumeration when the space is small).
+ * For rule i: `solo` = share of rows passing that rule on its own,
+ * `cumulative` = share passing rules 1..i together (in catalogue order).
+ * `constrainedShare` is the exact effect of excluded/required numbers.
+ */
+function ruleBreakdown(cfg, criteria, historyIndex, samples) {
+  const problems = validateCriteriaFeasibility(cfg, criteria);
+  const total = jackpotCombinations(cfg);
+  const catalog = ruleCatalog(cfg, criteria, historyIndex);
+  if (problems.length) return { feasible: false, problems, total, catalog, steps: [] };
+
+  const excluded = new Set(criteria.excludeNumbers.enabled ? criteria.excludeNumbers.numbers : []);
+  const required = criteria.requireNumbers.enabled ? criteria.requireNumbers.numbers.slice() : [];
+  const pool = [];
+  for (let n = 1; n <= cfg.mainMax; n++) if (!excluded.has(n) && !required.includes(n)) pool.push(n);
+  const k = cfg.mainPick - required.length;
+  const constrained = binomial(pool.length, k);
+  const starCombos = cfg.starPick ? binomial(cfg.starMax, cfg.starPick) : 1;
+  const constrainedCount = constrained * starCombos;
+
+  const active = catalog.filter((r) => r.enabled).map((r) => {
+    const only = criteriaOnly(criteria, r.id);
+    const soft = SOFT_RULE_KEYS.includes(r.id);
+    return Object.assign({}, r, {
+      test: soft ? (m) => softRuleFailures(m, cfg, only, true).length === 0 : (m) => rowPassesHardRules(m, only, historyIndex, [])
+    });
+  });
+
+  const solo = new Array(active.length).fill(0);
+  const cum = new Array(active.length).fill(0);
+  let n = 0;
+  const visit = (mains) => {
+    n++;
+    let running = true;
+    for (let i = 0; i < active.length; i++) {
+      const ok = active[i].test(mains);
+      if (ok) solo[i]++;
+      running = running && ok;
+      if (running) cum[i]++;
+    }
+  };
+  const full = (combo) => (required.length ? combo.concat(required).sort((a, b) => a - b) : combo.slice());
+  let exact = false;
+  if (active.length) {
+    if (constrained <= SPACE_EXACT_LIMIT) {
+      exact = true;
+      forEachCombination(pool, k, (combo) => visit(full(combo)));
+    } else {
+      const target = samples || 40000;
+      for (let i = 0; i < target; i++) visit(full(sampleDistinct(pool, k)));
+    }
+  }
+  const steps = active.map((r, i) => ({
+    id: r.id, group: r.group, name: r.name, label: r.label,
+    solo: n ? solo[i] / n : 1,
+    cumulative: n ? cum[i] / n : 1
+  }));
+  const finalRate = steps.length ? steps[steps.length - 1].cumulative : 1;
+  const count = constrainedCount * finalRate;
+  return {
+    feasible: true, problems: [], total, catalog, steps, exact: exact || !active.length, samples: n,
+    constrainedMain: constrained, starCombos,
+    constrainedShare: total ? constrainedCount / total : 1,
+    finalRate, count, share: total ? count / total : 1
+  };
+}

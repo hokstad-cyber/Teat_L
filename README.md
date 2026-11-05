@@ -50,6 +50,15 @@ History controls:
 
 A statistics panel shows per-number frequency and hot/cold numbers for the active window.
 
+### Possibility space and dashboard
+The top of the picker compares **all possible rows** (5,379,616 for Lotto; 139,838,160 for
+Eurojackpot) with how many fit your rules and the share they represent, updating live. A
+separate **Dashboard** tab (the picker is unchanged) shows the same as a ring and KPIs, a
+funnel of how each rule narrows the field (cumulatively and on its own), a with/without-rules
+comparison of your odds, every setting at a glance (click a card to jump to it), and a
+number board. Narrowing the field does not improve the odds of any row — each stays 1 in N —
+and the app says so: if a draw fits your rules only share% of the time, the effects cancel.
+
 ### Data basis for your rows
 Every draw remembers its source. The **Data basis** panel above the rows shows, week by
 week and year by year, which weeks were fetched (and from which source), which are

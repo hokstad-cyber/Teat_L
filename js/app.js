@@ -21,6 +21,8 @@
     provenance: { lotto: [], eurojackpot: [] },
     /** report from the last automatic collection, per lottery */
     lastCollect: { lotto: null, eurojackpot: null },
+    /** "picker" (home) or "dashboard" */
+    view: "picker",
     /** active preset id, or "custom" once the user changes a rule */
     preset: null,
     /** which collapsible panels are open */
@@ -1489,6 +1491,7 @@
     box.dataset.level = level;
     $("#strictness-fill").style.width = space.feasible ? `${Math.max(3, Math.min(100, Math.round(space.share * 100)))}%` : "100%";
     $("#strictness-text").textContent = text;
+    scheduleDashboard();
   }
 
   /** Top-of-page comparison: all possible rows vs rows that fit the rules. */
@@ -1525,6 +1528,215 @@
       : `Rules narrow which rows you play — they do <strong>not</strong> improve your chances. Each row you play still has exactly <strong>1 in ${oneIn}</strong>. ` +
         `A random draw fits your rules only about <strong>${pct}</strong> of the time, and when it doesn't, none of your rows can win.`;
   }
+
+  /* ---------- dashboard view ---------- */
+
+  const RULE_TARGET = {
+    maxRun: ["balance", "crit-maxrun"], oddEven: ["balance", "crit-oddeven"], sumRange: ["balance", "crit-sum"],
+    zoneSpread: ["balance", "crit-zone"], parityRun: ["balance", "crit-parity"],
+    maxArithmetic: ["antipatterns", "crit-arith"], sameLastDigit: ["antipatterns", "ap-lastdigit"],
+    sharedMultiple: ["antipatterns", "ap-multiple"], lowHigh: ["antipatterns", "ap-lowhigh"], birthdayBias: ["antipatterns", "crit-birthday"],
+    reuseLast: [null, "reuse-enabled"], historyExact: ["history", "hist-exact"], historySubset: ["history", "hist-subset"]
+  };
+
+  let dashToken = 0;
+  let dashTimer = null;
+  const dashVisible = () => state.view === "dashboard";
+
+  function setView(view) {
+    state.view = view;
+    const dash = view === "dashboard";
+    $("#picker-view").hidden = dash;
+    $("#dashboard-view").hidden = !dash;
+    for (const [id, v] of [["tab-picker", "picker"], ["tab-dashboard", "dashboard"]]) {
+      const t = document.getElementById(id);
+      t.classList.toggle("active", v === view);
+      t.setAttribute("aria-selected", v === view ? "true" : "false");
+      t.tabIndex = v === view ? 0 : -1;
+    }
+    document.body.dataset.view = view;
+    window.scrollTo(0, 0);
+    if (dash) renderDashboard();
+  }
+
+  function scheduleDashboard() {
+    if (!dashVisible()) return;
+    clearTimeout(dashTimer);
+    dashTimer = setTimeout(renderDashboard, 150);
+  }
+
+  function ringSvg(share) {
+    const C = 2 * Math.PI * 52;
+    const len = Math.max(0.5, Math.min(1, share)) * C;
+    return `<svg viewBox="0 0 120 120" aria-hidden="true"><defs><linearGradient id="ringGrad" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="var(--fill-a)"/><stop offset="100%" stop-color="var(--fill-b)"/></linearGradient></defs>` +
+      `<circle class="ring-track" cx="60" cy="60" r="52"/><circle class="ring-fill" cx="60" cy="60" r="52" stroke-dasharray="${len.toFixed(1)} ${C.toFixed(1)}"/>` +
+      `<text class="ring-pct" x="60" y="62">${escapeHtml(fmtPct(share).replace(" %", "%"))}</text><text class="ring-sub" x="60" y="76">of all rows fit</text></svg>`;
+  }
+
+  function oneInText(total, n) {
+    if (!n) return "—";
+    const v = total / n;
+    return `1 in ${fmtInt(v >= 1000 ? sig3(v) : v)}`;
+  }
+
+  function renderDashboard() {
+    if (!dashVisible()) return;
+    const token = ++dashToken;
+    const cfg = LOTTERIES[state.lotteryId];
+    $("#dash-title").textContent = `Dashboard — ${cfg.name}`;
+    $("#dash-busy").hidden = false;
+    setTimeout(() => {
+      if (token !== dashToken) return;
+      const { criteria, historyIndex } = buildContext(cfg);
+      const bd = ruleBreakdown(cfg, criteria, historyIndex, 40000);
+      if (token !== dashToken) return;
+      drawDashboard(cfg, criteria, historyIndex, bd);
+      $("#dash-busy").hidden = true;
+    }, 30);
+  }
+
+  function drawDashboard(cfg, criteria, historyIndex, bd) {
+    const total = bd.total;
+    const rows = rowCount();
+    const price = state.rowPrice[cfg.id];
+    const kr = (v) => v.toLocaleString("nb-NO", { maximumFractionDigits: 0 });
+    const approx = bd.exact ? "" : "≈ ";
+    const cnt = (v) => approx + fmtInt(bd.exact ? v : sig3(v));
+
+    // --- hero ---
+    if (!bd.feasible) {
+      $("#dash-ring").innerHTML = ringSvg(1);
+      $("#dash-ring-caption").innerHTML = `<strong>Your rules conflict.</strong><br>${escapeHtml(bd.problems[0])}`;
+      for (const id of ["kpi-fit", "kpi-out"]) $("#" + id).textContent = "—";
+      $("#kpi-total").textContent = fmtInt(total);
+      $("#funnel").innerHTML = `<p class="dash-hint">Fix the conflicting rule to see the breakdown.</p>`;
+      $("#proof").innerHTML = "";
+      renderDashRules(bd, null);
+      renderBoard(cfg, criteria);
+      renderDashData(cfg, criteria, historyIndex);
+      return;
+    }
+    const share = bd.share;
+    $("#dash-ring").innerHTML = ringSvg(share);
+    $("#dash-ring-caption").innerHTML = share >= 0.9995
+      ? "<strong>No rule narrows the field.</strong><br>Every possible row is still on the table."
+      : `<strong>${escapeHtml(fmtPct(share))}</strong> of all possible rows fit your rules.<br>${escapeHtml(fmtPct(1 - share))} are ruled out.`;
+    $("#kpi-total").textContent = fmtInt(total);
+    $("#kpi-total-sub").textContent = cfg.starPick ? `${cfg.mainPick} of ${cfg.mainMax} × ${cfg.starPick} of ${cfg.starMax} stars` : `${cfg.mainPick} of ${cfg.mainMax} numbers`;
+    $("#kpi-fit").textContent = cnt(bd.count);
+    $("#kpi-fit-sub").textContent = bd.exact ? "counted exactly" : `estimate from ${fmtInt(bd.samples)} sampled rows`;
+    $("#kpi-out").textContent = cnt(total - bd.count);
+    $("#kpi-out-sub").textContent = `${fmtPct(1 - share)} of the field`;
+    $("#kpi-odds").textContent = `1 in ${fmtInt(total)}`;
+
+    // --- funnel ---
+    const fRows = [];
+    const bar = (cls, name, label, cum, solo, valCount) => {
+      const w = Math.max(0.4, cum * 100);
+      const soloMark = solo === null ? "" : `<i class="fun-solo" style="left:${(Math.max(0, Math.min(1, solo)) * 100).toFixed(2)}%" title="alone: ${fmtPct(solo)}"></i>`;
+      return `<div class="fun-row ${cls}"><div class="fun-name"><strong>${escapeHtml(name)}</strong><span>${escapeHtml(label)}</span></div>` +
+        `<div class="fun-track" role="img" aria-label="${escapeHtml(name)}: ${fmtPct(cum)} of all rows remain"><div class="fun-fill" style="width:${w.toFixed(2)}%"></div>${soloMark}</div>` +
+        `<div class="fun-val"><strong>${escapeHtml(fmtPct(cum))}</strong><span>${escapeHtml(valCount)}</span></div></div>`;
+    };
+    fRows.push(bar("start", "All possible rows", "no rules", 1, null, fmtInt(total)));
+    let base = bd.constrainedShare;
+    if (base < 0.99999) {
+      fRows.push(bar("", "Excluded / required numbers", `${criteria.excludeNumbers.enabled && criteria.excludeNumbers.numbers.length ? "never " + criteria.excludeNumbers.numbers.join(", ") : ""}${criteria.requireNumbers.enabled && criteria.requireNumbers.numbers.length ? " always " + criteria.requireNumbers.numbers.join(", ") : ""}`.trim(), base, null, fmtInt(base * total)));
+    }
+    const minSolo = Math.min(...bd.steps.map((s) => s.solo), 1);
+    for (const s of bd.steps) {
+      const cum = base * s.cumulative;
+      const strongest = bd.steps.length > 1 && s.solo === minSolo && s.solo < 0.95;
+      fRows.push(bar(strongest ? "strongest" : "", s.name, `${s.label} · alone keeps ${fmtPct(s.solo)}`, cum, base * s.solo, cnt(cum * total)));
+    }
+    if (!bd.steps.length && base >= 0.99999) fRows.push(`<p class="dash-hint">No rules are switched on. Turn some on in the picker to see how they narrow the field.</p>`);
+    $("#funnel").innerHTML = fRows.join("") + `<p class="fun-legend"><i></i>marks how much that rule would keep <em>on its own</em>.</p>`;
+
+    // --- proof ---
+    const fit = bd.count;
+    $("#proof-hint").textContent = rows === 1
+      ? "Your odds for a single row, with and without the rules."
+      : `Your odds of winning the jackpot with ${rows} rows, with and without the rules.`;
+    const without = oneInText(total, rows);
+    const cond = oneInText(fit, rows);
+    const overall = oneInText(total, rows);
+    const coverCost = fit * price;
+    $("#proof").innerHTML =
+      `<div class="proof-col"><h4>Without rules</h4><div class="proof-eq">${rows} row${rows === 1 ? "" : "s"} ÷ <b>${fmtInt(total)}</b> possible rows</div><div class="proof-res">${escapeHtml(without)}</div></div>` +
+      `<div class="proof-col"><h4>With your rules</h4><div class="proof-eq">Chance the draw fits your rules: <b>${escapeHtml(fmtPct(share))}</b><br>If it does, ${rows} row${rows === 1 ? "" : "s"} ÷ <b>${escapeHtml(cnt(fit))}</b> fitting rows: <b>${escapeHtml(cond)}</b></div><div class="proof-res">${escapeHtml(fmtPct(share))} × ${escapeHtml(cond)} = ${escapeHtml(overall)}</div></div>` +
+      `<div class="proof-eqsign">= the same overall chance</div>` +
+      `<div class="proof-note"><strong>Why rules don't raise your chances.</strong> They shrink the pool, so <em>if</em> the draw lands inside it each row is worth more — but the draw lands inside only ${escapeHtml(fmtPct(share))} of the time, and the two effects cancel exactly. ` +
+      (share < 0.9995 ? `To cover every fitting row you would need about ${escapeHtml(cnt(fit))} rows (≈ ${kr(coverCost)} kr) and would still win only ${escapeHtml(fmtPct(share))} of the time.` : `With no rules every row is equally likely.`) + `</div>`;
+
+    renderDashRules(bd, criteria);
+    renderBoard(cfg, criteria);
+    renderDashData(cfg, criteria, historyIndex);
+  }
+
+  function renderDashRules(bd, criteria) {
+    const grid = $("#dash-rules");
+    grid.innerHTML = "";
+    const stepById = new Map((bd.steps || []).map((s) => [s.id, s]));
+    for (const r of bd.catalog) {
+      const s = stepById.get(r.id);
+      const card = document.createElement("button");
+      card.type = "button";
+      card.className = `rule-card ${r.enabled ? "on" : "off"}`;
+      card.dataset.rule = r.id;
+      const keep = r.enabled && s ? `<div class="rc-keep">Alone keeps <b>${escapeHtml(fmtPct(s.solo))}</b></div><div class="rc-bar"><i style="width:${(s.solo * 100).toFixed(1)}%"></i></div>` : "";
+      card.innerHTML = `<div class="rc-top"><span class="rc-group">${escapeHtml(r.group)}</span><span class="rc-chip">${r.enabled ? "ON" : "OFF"}</span></div>` +
+        `<div class="rc-name">${escapeHtml(r.name)}</div><div class="rc-label">${escapeHtml(r.label)}</div>${keep}`;
+      grid.appendChild(card);
+    }
+  }
+
+  function renderBoard(cfg, criteria) {
+    const draws = activeDraws();
+    const freq = numberFrequencies(draws, cfg);
+    const max = Math.max(1, ...freq.slice(1));
+    const min = Math.min(...freq.slice(1));
+    const span = Math.max(1, max - min);
+    const exc = new Set(criteria.excludeNumbers.enabled ? criteria.excludeNumbers.numbers : []);
+    const req = new Set(criteria.requireNumbers.enabled ? criteria.requireNumbers.numbers : []);
+    const board = $("#board");
+    board.innerHTML = "";
+    for (let n = 1; n <= cfg.mainMax; n++) {
+      const t = document.createElement("i");
+      const heat = draws.length ? (freq[n] - min) / span : 0;
+      t.className = `tile${state.lastDrawSet.has(n) ? " last" : ""}${req.has(n) ? " req" : ""}${exc.has(n) ? " exc" : ""}`;
+      t.style.setProperty("--heat", heat.toFixed(3));
+      t.textContent = n;
+      t.title = `${n}${draws.length ? ` — drawn ${freq[n]}×` : ""}${state.lastDrawSet.has(n) ? " · in the last draw" : ""}${req.has(n) ? " · required" : ""}${exc.has(n) ? " · excluded" : ""}`;
+      board.appendChild(t);
+    }
+  }
+
+  function renderDashData(cfg, criteria, historyIndex) {
+    const all = state.history[cfg.id];
+    const active = activeDraws();
+    const f = freshnessInfo(cfg);
+    const years = $("#hist-window").checked ? intVal("hist-window-years", 5) : null;
+    const price = state.rowPrice[cfg.id];
+    const rows = rowCount();
+    const list = (label, value, warn) => `<div class="dd-row"><span>${escapeHtml(label)}</span><strong class="${warn ? "dd-warn" : ""}">${escapeHtml(value)}</strong></div>`;
+    const lc = state.lastCollect[cfg.id];
+    const out = [];
+    out.push(list("Style preset", state.preset && PRESETS[state.preset] ? PRESETS[state.preset].label : state.preset === "custom" ? "Custom" : "None chosen"));
+    out.push(list("Rows / coupon cost", `${rows} × ${kr0(price)} kr = ${kr0(rows * price)} kr`));
+    out.push(list("Lookback window", years ? `${years} year${years === 1 ? "" : "s"}` : "all loaded draws"));
+    out.push(list("Draws used", all.length ? `${active.length} of ${all.length} loaded` : "none loaded", !all.length));
+    if (f.newest) out.push(list("Newest draw", f.newest.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }) + (f.stale ? ` (${f.missingSince} newer not loaded)` : ""), f.stale));
+    if (lc) out.push(list("Last fetch", new Date(lc.at).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" }) + (lc.missingWeeks ? ` · ${lc.missingWeeks} weeks missing` : ""), !!lc.missingWeeks));
+    out.push(list("Favour overdue / rare", `${criteria ? (document.getElementById("bias-overdue").checked ? intVal("bias-overdue-strength", 0) + " %" : "off") : "—"} / ${document.getElementById("bias-cold").checked ? intVal("bias-cold-strength", 0) + " %" : "off"}`));
+    out.push(list("Weighting changes", "which rows are likelier, not which are possible"));
+    const ex = criteria.excludeNumbers.enabled ? criteria.excludeNumbers.numbers : [];
+    const rq = criteria.requireNumbers.enabled ? criteria.requireNumbers.numbers : [];
+    out.push(list("Excluded numbers", ex.length ? ex.join(", ") : "none"));
+    out.push(list("Required numbers", rq.length ? rq.join(", ") : "none"));
+    out.push(list("Row overlap limit", criteria.batchOverlap.enabled ? `≤ ${criteria.batchOverlap.maxShared} shared` : "off"));
+    $("#dash-data").innerHTML = out.join("");
+  }
+  const kr0 = (v) => v.toLocaleString("nb-NO", { maximumFractionDigits: 0 });
 
   /* ---------- collapsible panels ---------- */
 
@@ -1735,6 +1947,28 @@
     $("#history-crawl").addEventListener("click", fetchHistoryChain);
     $("#history-download").addEventListener("click", downloadDataset);
     $("#coverage-fetch").addEventListener("click", fetchHistoryChain);
+
+    // View tabs (the picker stays exactly as it was).
+    $("#tab-picker").addEventListener("click", () => setView("picker"));
+    $("#tab-dashboard").addEventListener("click", () => setView("dashboard"));
+    $("#dash-to-picker").addEventListener("click", () => { setView("picker"); $("#tab-picker").focus(); });
+    $("#dash-refresh").addEventListener("click", renderDashboard);
+    $(".view-tabs").addEventListener("keydown", (e) => {
+      if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+      const next = state.view === "picker" ? "dashboard" : "picker";
+      setView(next);
+      $(next === "picker" ? "#tab-picker" : "#tab-dashboard").focus();
+    });
+    $("#dash-rules").addEventListener("click", (e) => {
+      const card = e.target.closest("[data-rule]");
+      if (!card) return;
+      const [panel, id] = RULE_TARGET[card.dataset.rule] || [];
+      setView("picker");
+      if (panel) { const d = document.querySelector(`details[data-panel="${panel}"]`); if (d) d.open = true; }
+      const el = document.getElementById(id);
+      const target = el && (el.closest(".criterion, .reuse-control") || el);
+      if (target) { target.scrollIntoView({ block: "center" }); const f = el.type === "checkbox" ? el : target.querySelector("input"); if (f) f.focus({ preventScroll: true }); }
+    });
     $("#freshness-fetch").addEventListener("click", fetchHistoryChain);
     $("#fetch-banner-close").addEventListener("click", () => ($("#fetch-banner").hidden = true));
     $("#fetch-banner-details").addEventListener("click", () => {

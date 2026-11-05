@@ -87,35 +87,69 @@ function windowHasMissing(win, missing) {
 
 /* ---------------- source 1: Norsk Tipping results API v2 ---------------- */
 
+/** One window against one endpoint variant. Returns { draws } or throws. */
+async function fetchV2Window(base, win, cfg) {
+  const url = `${base}?fromDate=${isoDateKey(win.from)}&toDate=${isoDateKey(win.to)}`;
+  const res = await fetchWithTimeout(url, { headers: { Accept: "application/json" } });
+  if (res.status === 401 || res.status === 403) throw Object.assign(new Error(`HTTP ${res.status} — access denied; not retried`), { fatal: true });
+  if (res.status === 429) throw Object.assign(new Error("HTTP 429 — rate limited; stopped to stay polite"), { fatal: true });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return parseNorskTippingV2(await res.json(), cfg, "nt-api-v2");
+}
+
 async function sourceNtApiV2(cfg, range, state, report) {
   const src = report.start("nt-api-v2", "nt-api-v2");
   const wins = windowsNewestFirst(range.from, range.to, cfg.api.v2WindowDays);
+  // The game name differs per lottery (Eurojackpot is "eurojackpot all"), so
+  // endpoint variants are tried in order until one returns draws, then kept.
+  const variants = [cfg.api.v2].concat(cfg.api.v2Alt || []);
+  let locked = variants.length === 1 ? 0 : -1;
   let fails = 0;
   let calls = 0;
   for (const win of wins) {
     if (!windowHasMissing(win, state.missing)) continue; // already covered by earlier data
-    const url = `${cfg.api.v2}?fromDate=${isoDateKey(win.from)}&toDate=${isoDateKey(win.to)}`;
     report.progress(`Norsk Tipping API: ${isoDateKey(win.from)} → ${isoDateKey(win.to)} (${++calls} requests)`);
-    try {
-      const res = await fetchWithTimeout(url, { headers: { Accept: "application/json" } });
-      if (res.status === 401 || res.status === 403) throw Object.assign(new Error(`HTTP ${res.status} — access denied; not retried`), { fatal: true });
-      if (res.status === 429) throw Object.assign(new Error("HTTP 429 — rate limited; stopped to stay polite"), { fatal: true });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const draws = parseNorskTippingV2(await res.json(), cfg, "nt-api-v2");
+    const order = locked >= 0 ? [locked] : variants.map((_, i) => i);
+    let draws = null;
+    let fatal = null;
+    const attemptErrors = [];
+    for (const vi of order) {
+      try {
+        const got = await fetchV2Window(variants[vi], win, cfg);
+        if (got.length === 0 && locked < 0 && vi < variants.length - 1) {
+          attemptErrors.push(`${variants[vi].split("/").pop()}: no draws`);
+          continue; // try the next variant before concluding the window is empty
+        }
+        draws = got;
+        if (got.length && locked < 0) {
+          locked = vi;
+          src.note = vi > 0 ? `used endpoint …/${decodeURIComponent(variants[vi].split("/").pop())}` : "";
+        }
+        break;
+      } catch (e) {
+        if (e.fatal) { fatal = e; break; }
+        attemptErrors.push(`${decodeURIComponent(variants[vi].split("/").pop())}: ${describeError(e)}`);
+      }
+    }
+    if (fatal) {
+      src.errors.push(`${isoDateKey(win.from)}…${isoDateKey(win.to)}: ${describeError(fatal)}`);
+      src.note = describeError(fatal);
+      break;
+    }
+    if (draws) {
       state.add(draws, "nt-api-v2");
       src.draws += draws.length;
       src.windows++;
       fails = 0;
       if (draws.length === 0 && win.to < new Date(range.to.getFullYear() - 1, 0, 1)) {
-        // Empty window well in the past: likely before the API's own history start.
         src.note = `no data before ${isoDateKey(win.to)} — the API's history seems to start later`;
         break;
       }
-    } catch (e) {
+    } else {
       fails++;
-      src.errors.push(`${isoDateKey(win.from)}…${isoDateKey(win.to)}: ${describeError(e)}`);
-      if (e.fatal || fails >= API_MAX_CONSECUTIVE_FAILS) {
-        src.note = e.fatal ? describeError(e) : `gave up after ${fails} consecutive failures`;
+      src.errors.push(`${isoDateKey(win.from)}…${isoDateKey(win.to)}: ${attemptErrors.join(" · ")}`);
+      if (fails >= API_MAX_CONSECUTIVE_FAILS) {
+        src.note = `gave up after ${fails} consecutive failures (${attemptErrors.join(" · ")})`;
         break;
       }
     }

@@ -18,6 +18,10 @@
         <p class="tagline">Smart lottery number picker</p>
       </div>
     </div>
+    <nav class="view-tabs" role="tablist" aria-label="View">
+      <button type="button" id="tab-picker" class="view-tab active" role="tab" aria-selected="true" aria-controls="picker-view">Picker</button>
+      <button type="button" id="tab-dashboard" class="view-tab" role="tab" aria-selected="false" aria-controls="dashboard-view" tabindex="-1">Dashboard</button>
+    </nav>
     <div class="lottery-switch" role="tablist" aria-label="Lottery system">
       <button id="switch-lotto" class="switch-btn active" role="tab" aria-selected="true">
         <span class="dot dot-lotto"></span> Norsk Lotto
@@ -30,7 +34,7 @@
     </div>
   </header>
 
-  <main class="layout">
+  <main class="layout" id="picker-view" role="tabpanel" aria-labelledby="tab-picker">
 
     <!-- ============ SIDEBAR: criteria + history ============ -->
     <aside class="sidebar" aria-label="Settings">
@@ -584,6 +588,71 @@
       </footer>
     </section>
 
+  </main>
+
+  <!-- ============ DASHBOARD VIEW (separate from the picker) ============ -->
+  <main class="dash" id="dashboard-view" role="tabpanel" aria-labelledby="tab-dashboard" hidden>
+    <div class="dash-head">
+      <div>
+        <h2 id="dash-title">Dashboard</h2>
+        <p class="panel-hint" id="dash-sub">How your settings shape the possible rows — and what that does (and does not) mean for your chances.</p>
+      </div>
+      <div class="btn-row">
+        <button type="button" class="btn small" id="dash-refresh">↻ Recalculate</button>
+        <button type="button" class="btn small primary" id="dash-to-picker">← Back to picker</button>
+      </div>
+    </div>
+    <div id="dash-busy" class="dash-busy" role="status" aria-live="polite" hidden>Calculating…</div>
+
+    <section class="dash-hero" aria-label="Summary">
+      <div class="dash-ring-card">
+        <div class="dash-ring" id="dash-ring" role="img" aria-label="Share of possible rows that fit your rules"></div>
+        <div class="dash-ring-caption" id="dash-ring-caption"></div>
+      </div>
+      <div class="dash-kpis">
+        <div class="kpi"><span class="kpi-label">All possible rows</span><strong id="kpi-total">—</strong><span class="kpi-sub" id="kpi-total-sub"></span></div>
+        <div class="kpi kpi-accent"><span class="kpi-label">Rows that fit your rules</span><strong id="kpi-fit">—</strong><span class="kpi-sub" id="kpi-fit-sub"></span></div>
+        <div class="kpi"><span class="kpi-label">Ruled out</span><strong id="kpi-out">—</strong><span class="kpi-sub" id="kpi-out-sub"></span></div>
+        <div class="kpi"><span class="kpi-label">Odds per row</span><strong id="kpi-odds">—</strong><span class="kpi-sub">the same with or without rules</span></div>
+      </div>
+    </section>
+
+    <section class="dash-card" aria-labelledby="funnel-title">
+      <h3 id="funnel-title">From all rows to your rows</h3>
+      <p class="dash-hint">Each rule in turn: the bar is how many rows are still possible after it (cumulative). “Alone” is what that rule would keep by itself.</p>
+      <div id="funnel" class="funnel"></div>
+    </section>
+
+    <div class="dash-two">
+      <section class="dash-card" aria-labelledby="proof-title">
+        <h3 id="proof-title">What it means for your chances</h3>
+        <p class="dash-hint" id="proof-hint"></p>
+        <div class="proof" id="proof"></div>
+      </section>
+      <section class="dash-card" aria-labelledby="data-title">
+        <h3 id="data-title">Data and setup</h3>
+        <div id="dash-data" class="dash-data"></div>
+      </section>
+    </div>
+
+    <section class="dash-card" aria-labelledby="rules-title">
+      <h3 id="rules-title">All settings at a glance</h3>
+      <p class="dash-hint">Every rule with its current setting, and how much of the field it keeps on its own. Click a card to change it in the picker.</p>
+      <div id="dash-rules" class="rule-grid"></div>
+    </section>
+
+    <section class="dash-card" aria-labelledby="board-title">
+      <h3 id="board-title">Number board</h3>
+      <p class="dash-hint">How often each number was drawn in your lookback window, with your required, excluded and last-draw numbers marked.</p>
+      <div id="board" class="board"></div>
+      <div class="board-legend" aria-hidden="true">
+        <span><i class="tile t-last">★</i> last draw</span>
+        <span><i class="tile t-req"></i> required</span>
+        <span><i class="tile t-exc"></i> excluded</span>
+        <span><i class="tile t-hot"></i> drawn more often</span>
+        <span><i class="tile t-cold"></i> drawn less often</span>
+      </div>
+    </section>
   </main>
 
   <div id="toast" class="toast" role="status" aria-live="polite" hidden>

@@ -34,7 +34,7 @@ const {
   drawsSinceLastSeen, softRuleFailures, estimatePassRate,
   isoWeekOf, isoWeekStart, isoWeeksInYear, coverageByWeek, parseNorskTippingV2, parseHeaderCsv,
   mergeDrawsByDate, windowsNewestFirst, expectedDrawsInWeek, isoDateKey, drawsExpectedBetween,
-  estimateSpace, jackpotCombinations, binomial
+  estimateSpace, jackpotCombinations, binomial, ruleBreakdown, ruleCatalog
 } = vm.runInContext(
   `({ LOTTERIES, sampleDistinct, combinationKeys, longestConsecutiveRun, sumOf, countOdd,
       overlapCount, parseDrawsText, parseDraws, filterDrawsByYears, buildHistoryIndex,
@@ -43,7 +43,7 @@ const {
       drawsSinceLastSeen, softRuleFailures, estimatePassRate,
       isoWeekOf, isoWeekStart, isoWeeksInYear, coverageByWeek, parseNorskTippingV2, parseHeaderCsv,
       mergeDrawsByDate, windowsNewestFirst, expectedDrawsInWeek, isoDateKey, drawsExpectedBetween,
-      estimateSpace, jackpotCombinations, binomial })`,
+      estimateSpace, jackpotCombinations, binomial, ruleBreakdown, ruleCatalog })`,
   context
 );
 
@@ -601,6 +601,30 @@ for (const cfg of [lotto, euro]) {
   assert(!estimateSpace(lotto, bad, hx).feasible, "space: conflict reported");
   const more = none(lotto); more.maxRun = { enabled: true, value: 2 }; more.oddEven = { enabled: true, minOdd: 3, maxOdd: 4 };
   assert(estimateSpace(lotto, more, hx, 40000).count < mcR.count, "space: an extra rule lowers the count");
+}
+
+/* ---- rule breakdown (funnel) ---- */
+{
+  const hx = buildHistoryIndex([], 0);
+  const c = defaultCriteria(lotto);
+  const bd = ruleBreakdown(lotto, c, hx, 40000);
+  assert(bd.feasible && bd.steps.length >= 5, "breakdown: lists the active rules (" + bd.steps.length + ")");
+  assert(bd.steps.every((s, i) => s.cumulative <= (i ? bd.steps[i - 1].cumulative : 1) + 1e-12), "breakdown: cumulative share never increases");
+  assert(bd.steps.every((s) => s.solo >= s.cumulative - 1e-12), "breakdown: a rule alone keeps at least as much as the cumulative");
+  const sp = estimateSpace(lotto, c, hx, 40000);
+  assert(Math.abs(bd.share - sp.share) < 0.02, `breakdown: final share ${bd.share.toFixed(3)} agrees with estimateSpace ${sp.share.toFixed(3)}`);
+  assert(ruleCatalog(lotto, c, hx).length === 13 && ruleCatalog(lotto, c, hx).some((r) => !r.enabled), "breakdown: catalogue lists all 13 rules incl. disabled");
+  // exact small space: required numbers + maxRun
+  const req = defaultCriteria(lotto);
+  for (const k of ["oddEven", "sumRange", "zoneSpread", "parityRun", "maxArithmetic", "sameLastDigit", "sharedMultiple"]) req[k].enabled = false;
+  req.requireNumbers = { enabled: true, numbers: [1, 10, 20, 30] };
+  const rb = ruleBreakdown(lotto, req, hx);
+  assert(rb.exact && rb.constrainedMain === binomial(30, 3), "breakdown: required numbers shrink space exactly");
+  const none = defaultCriteria(lotto);
+  for (const k of ["maxRun", "oddEven", "sumRange", "zoneSpread", "parityRun", "maxArithmetic", "sameLastDigit", "sharedMultiple", "lowHigh", "birthdayBias"]) none[k].enabled = false;
+  none.historyExact.enabled = false; none.historySubset.enabled = false;
+  const nb = ruleBreakdown(lotto, none, hx);
+  assert(nb.steps.length === 0 && nb.share === 1 && nb.count === 5379616, "breakdown: no rules → full space");
 }
 
 /* ---- windows ---- */

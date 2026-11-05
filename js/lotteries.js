@@ -59,7 +59,10 @@ const LOTTERIES = {
     // One Friday draw until March 2022; Tuesday draws from 29 March 2022.
     schedule: [{ from: "2012-03-23", perWeek: 1, drawDays: [5] }, { from: "2022-03-29", perWeek: 2, drawDays: [2, 5] }],
     api: {
-      v2: "https://api.norsk-tipping.no/LotteryGameInfo/v2/api/results/eurojackpot",
+      // The open-source client github.com/X104n/lotto requests Eurojackpot as the game
+      // "eurojackpot all"; plain "eurojackpot" is kept as a fallback variant.
+      v2: "https://api.norsk-tipping.no/LotteryGameInfo/v2/api/results/eurojackpot%20all",
+      v2Alt: ["https://api.norsk-tipping.no/LotteryGameInfo/v2/api/results/eurojackpot"],
       v2WindowDays: 15 * 7 - 1,
       legacy: "https://www.norsk-tipping.no/api-eurojackpot/getResultInfo.json"
     },

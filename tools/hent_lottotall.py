@@ -86,7 +86,9 @@ GAMES = {
         ],
     },
     "eurojackpot": {
-        "api_game": "eurojackpot",
+        # X104n/lotto henter Eurojackpot som spillet "eurojackpot all"; "eurojackpot" er reserve.
+        "api_game": "eurojackpot all",
+        "api_game_alt": ["eurojackpot"],
         "eras": [
             # 23.03.2012: 5 av 50 + 2 stjernetall av 10, fredag. Norge med fra feb. 2013.
             Era(date(2012, 3, 23), 5, 50, 2, 10, (4,)),
@@ -318,13 +320,24 @@ def chunk_ranges(start: date, end: date, days: int = CHUNK_DAYS) -> Iterable[tup
 
 
 def fetch_range(client: PoliteClient, game: str, start: date, end: date, use_cache: bool = True) -> list:
-    api_game = GAMES[game]["api_game"]
+    variants = [GAMES[game]["api_game"]] + GAMES[game].get("api_game_alt", [])
+    chosen = None
     out = []
     for a, b in chunk_ranges(start, end):
-        url = API_BASE + urllib.parse.quote(api_game) + f"?fromDate={a.isoformat()}&toDate={b.isoformat()}"
         log.info("henter %s %s → %s", game, a, b)
-        data = client.get_json(url, use_cache=use_cache and b < date.today())
-        items = _extract_draw_list(data)
+        items = []
+        url = ""
+        for name in ([chosen] if chosen else variants):
+            url = API_BASE + urllib.parse.quote(name) + f"?fromDate={a.isoformat()}&toDate={b.isoformat()}"
+            try:
+                data = client.get_json(url, use_cache=use_cache and b < date.today())
+            except urllib.error.HTTPError as e:
+                log.warning("variant %r svarte HTTP %s", name, e.code)
+                continue
+            items = _extract_draw_list(data)
+            if items:
+                chosen = name
+                break
         if not items:
             log.warning("ingen trekninger i svaret for %s–%s (kan være før dekningsstart, eller endret svarformat)", a, b)
         for it in items:
