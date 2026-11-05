@@ -541,3 +541,21 @@ function mergeDrawsByDate(existing, incoming) {
   }
   return { draws: out, conflicts, added };
 }
+
+/** Draws the schedule says should have happened after `after` (exclusive) up
+    to and including `until`. Used to tell the user how stale their data is. */
+function drawsExpectedBetween(cfg, after, until) {
+  if (!after || !until || until <= after) return 0;
+  let count = 0;
+  const launch = parseIsoDate(cfg.launch);
+  for (let d = new Date(after.getFullYear(), after.getMonth(), after.getDate() + 1); d <= until; d.setDate(d.getDate() + 1)) {
+    if (launch && d < launch) continue;
+    let rule = null;
+    for (const s of cfg.schedule || []) {
+      const from = parseIsoDate(s.from);
+      if (from && from <= d) rule = s;
+    }
+    if (rule && (rule.drawDays ? rule.drawDays.includes(d.getDay()) : d.getDay() === 6)) count++;
+  }
+  return count;
+}

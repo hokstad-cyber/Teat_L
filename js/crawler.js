@@ -21,7 +21,7 @@ const SOURCE_LABELS = {
   demo: "Synthetic demo data",
   "norsk-tipping-api-v2": "Norsk Tipping results API (collector)",
   "uttrekk-nt": "Norsk Tipping data extract",
-  unknown: "Unknown source"
+  unknown: "Loaded earlier (source not recorded)"
 };
 
 /** Human label for a draw's source key, including collector/third-party keys. */

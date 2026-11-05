@@ -329,6 +329,11 @@
             <button id="history-crawl" class="btn small primary">⤓ Fetch results</button>
             <button id="history-download" class="btn small">Download dataset CSV</button>
           </div>
+          <label class="toggle auto-update">
+            <input type="checkbox" id="auto-update" checked />
+            <span class="slider"></span>
+            <span class="toggle-label">Check for newer results when the app opens</span>
+          </label>
           <progress id="crawl-progress" class="crawl-progress" hidden aria-label="Fetching results"></progress>
           <p class="mini-hint" style="margin: 0 0 0.7rem;">Fetches draws for your lookback window and falls back automatically: Norsk Tipping's results API → the dataset shipped with the app → an independent public dataset → the legacy API. Later sources are only asked for weeks still missing. Every draw remembers its source, and the <a href="#coverage-card">data basis panel</a> shows which years and weeks were fetched and which are used.</p>
           <div id="source-status-wrap" class="source-status-wrap" hidden>
@@ -429,6 +434,28 @@
         <button id="btn-copy" class="btn small" disabled>Copy all</button>
         <button id="btn-csv" class="btn small" disabled>Download CSV</button>
         <button id="btn-print" class="btn small" disabled>Print</button>
+      </div>
+
+      <div id="fetch-banner" class="fetch-banner" role="status" aria-live="polite" hidden>
+        <div class="fetch-banner-row">
+          <span class="fetch-banner-icon" aria-hidden="true">⤓</span>
+          <div class="fetch-banner-text">
+            <strong id="fetch-banner-title"></strong>
+            <span id="fetch-banner-detail"></span>
+          </div>
+          <div class="btn-row">
+            <button type="button" id="fetch-banner-details" class="btn small ghost" hidden>Details</button>
+            <button type="button" id="fetch-banner-close" class="btn small ghost" aria-label="Dismiss" hidden>✕</button>
+          </div>
+        </div>
+        <progress id="fetch-banner-progress" class="crawl-progress" hidden aria-label="Fetching results"></progress>
+        <ul id="fetch-banner-sources" class="source-status compact" hidden></ul>
+      </div>
+
+      <div id="freshness-banner" class="freshness" hidden>
+        <span class="freshness-icon" aria-hidden="true">⚠</span>
+        <span id="freshness-text"></span>
+        <button type="button" id="freshness-fetch" class="btn small primary">⤓ Fetch newer results</button>
       </div>
 
       <section class="lastdraw-card" id="lastdraw-card">

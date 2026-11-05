@@ -33,7 +33,7 @@ const {
   maxSameLastDigit, maxSharedDivisor, zoneOfNumber, weightedSampleDistinct,
   drawsSinceLastSeen, softRuleFailures, estimatePassRate,
   isoWeekOf, isoWeekStart, isoWeeksInYear, coverageByWeek, parseNorskTippingV2, parseHeaderCsv,
-  mergeDrawsByDate, windowsNewestFirst, expectedDrawsInWeek, isoDateKey
+  mergeDrawsByDate, windowsNewestFirst, expectedDrawsInWeek, isoDateKey, drawsExpectedBetween
 } = vm.runInContext(
   `({ LOTTERIES, sampleDistinct, combinationKeys, longestConsecutiveRun, sumOf, countOdd,
       overlapCount, parseDrawsText, parseDraws, filterDrawsByYears, buildHistoryIndex,
@@ -41,7 +41,7 @@ const {
       maxSameLastDigit, maxSharedDivisor, zoneOfNumber, weightedSampleDistinct,
       drawsSinceLastSeen, softRuleFailures, estimatePassRate,
       isoWeekOf, isoWeekStart, isoWeeksInYear, coverageByWeek, parseNorskTippingV2, parseHeaderCsv,
-      mergeDrawsByDate, windowsNewestFirst, expectedDrawsInWeek, isoDateKey })`,
+      mergeDrawsByDate, windowsNewestFirst, expectedDrawsInWeek, isoDateKey, drawsExpectedBetween })`,
   context
 );
 
@@ -544,6 +544,15 @@ for (const cfg of [lotto, euro]) {
              { date: new Date(2024, 2, 9), mains: [1,2,3,4,5,6,9], stars: [], source: "csv" }];
   const m = mergeDrawsByDate(a, b);
   assert(m.draws.length === 2 && m.added === 1 && m.conflicts.length === 1 && m.draws[0].source === "nt-api-v2", "merge: earlier source wins, conflict reported");
+}
+
+/* ---- freshness ---- */
+{
+  // Newest Lotto draw Fri 5 Jun 2026 (odd, but that is what the user had); today Thu 5 Nov 2026 → 22 Saturdays.
+  assert(drawsExpectedBetween(lotto, new Date(2026, 5, 5), new Date(2026, 10, 5)) === 22, "freshness: 22 Saturday draws missed");
+  assert(drawsExpectedBetween(lotto, new Date(2026, 10, 1), new Date(2026, 10, 5)) === 0, "freshness: up to date mid-week");
+  assert(drawsExpectedBetween(euro, new Date(2026, 10, 2), new Date(2026, 10, 5)) === 1, "freshness: Tuesday draw missed, Friday not yet");
+  assert(drawsExpectedBetween(euro, new Date(2026, 10, 5), new Date(2026, 10, 1)) === 0, "freshness: reversed range is zero");
 }
 
 /* ---- windows ---- */

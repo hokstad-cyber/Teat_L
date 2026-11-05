@@ -971,3 +971,44 @@ details[open] > summary .chevron { transform: rotate(-135deg); margin-bottom: -0
   .cov-year { width: 2.4rem; font-size: 0.68rem; }
   .cov-cells { min-width: 330px; }
 }
+
+
+/* ============ Fetch status + freshness banners ============ */
+
+.fetch-banner {
+  margin-bottom: 1rem;
+  padding: 0.75rem 1rem;
+  border-radius: var(--radius-sm);
+  background: rgba(63, 210, 139, 0.08);
+  border: 1px solid rgba(63, 210, 139, 0.35);
+  font-size: 0.86rem;
+}
+.fetch-banner[data-state="running"] { background: rgba(255, 255, 255, 0.05); border-color: var(--panel-edge); }
+.fetch-banner[data-state="warn"] { background: rgba(255, 194, 75, 0.1); border-color: rgba(255, 194, 75, 0.4); }
+.fetch-banner[data-state="error"] { background: rgba(255, 93, 108, 0.1); border-color: rgba(255, 93, 108, 0.45); }
+.fetch-banner-row { display: flex; align-items: center; gap: 0.7rem; flex-wrap: wrap; }
+.fetch-banner-icon { font-size: 1.1rem; }
+.fetch-banner-text { flex: 1; display: flex; flex-direction: column; gap: 0.1rem; min-width: 14rem; }
+.fetch-banner-text span { color: var(--text-dim); }
+.fetch-banner .crawl-progress { margin: 0.6rem 0 0; }
+.source-status.compact { margin-top: 0.6rem; }
+.source-status.compact .src { font-size: 0.76rem; }
+
+.freshness {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+  padding: 0.7rem 1rem;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 194, 75, 0.1);
+  border: 1px solid rgba(255, 194, 75, 0.4);
+  font-size: 0.86rem;
+}
+.freshness[data-level="empty"] { background: rgba(255, 255, 255, 0.05); border-color: var(--panel-edge); }
+.freshness-icon { color: var(--gold); font-weight: 800; }
+.freshness #freshness-text { flex: 1; min-width: 14rem; }
+.freshness strong { color: var(--text); }
+.auto-update { margin: 0.2rem 0 0.9rem; }
+.lastdraw-meta .stale { color: var(--gold); }

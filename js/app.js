@@ -155,6 +155,7 @@
     "hist-window", "hist-window-years",
     "hist-exact",
     "hist-subset", "hist-subset-size",
+    "auto-update",
     "reuse-enabled", "reuse-min", "reuse-max",
     "row-count"
   ];
@@ -322,6 +323,8 @@
     renderStats();
     renderProvenance();
     renderCoverage();
+    renderFreshness();
+    $("#fetch-banner").hidden = true;
     const lc = state.lastCollect[id];
     if (lc && lc.sources) renderSourceStatus(lc.sources.map((x) => Object.assign({ errors: [] }, x)), true);
     else { $("#source-status").innerHTML = ""; $("#source-status-wrap").hidden = true; delete $("#source-status-wrap").dataset.done; }
@@ -361,6 +364,7 @@
     refreshLastDraw();
     renderProvenance();
     renderCoverage();
+    renderFreshness();
     updatePanelCounts();
     scheduleStrictness();
     saveState();
@@ -496,7 +500,9 @@
     } else if (draw.source === "picked") {
       meta.textContent = `Selected result${fmt ? ` — ${fmt}` : ""}.`;
     } else {
-      meta.textContent = `Newest result in your history${fmt ? ` — ${fmt}` : ""}.`;
+      const f = freshnessInfo(LOTTERIES[state.lotteryId]);
+      meta.innerHTML = `Newest result in your history${fmt ? ` — ${fmt}` : ""}.` +
+        (f.stale ? ` <span class="stale">About ${f.missingSince} newer draw${f.missingSince === 1 ? "" : "s"} not loaded yet.</span>` : "");
     }
   }
 
@@ -670,12 +676,14 @@
     delete $("#source-status-wrap").dataset.done;
     $("#source-status").innerHTML = "";
     const range = wantedRange(cfg);
+    showFetchBanner("running", `Fetching ${cfg.name} results…`, `${isoDateKey(range.from)} → ${isoDateKey(range.to)}, trying Norsk Tipping first, then the fallback sources.`);
     try {
       setHistoryStatus(`Fetching ${cfg.name} results ${isoDateKey(range.from)} → ${isoDateKey(range.to)}…`, false);
       const before = state.history[id].length;
       const result = await collectHistory(cfg, range, state.history[id], (msg, sources) => {
         setHistoryStatus(msg, false);
         renderSourceStatus(sources, false);
+        showFetchBanner("running", `Fetching ${cfg.name} results…`, msg, sources);
       });
       state.history[id] = result.draws;
       const added = result.draws.length - before;
@@ -706,21 +714,101 @@
       refreshLastDraw();
       renderProvenance();
       renderCoverage();
+      renderFreshness();
       updatePanelCounts();
       scheduleStrictness();
       saveState();
-      if (!result.draws.length) {
-        showToast("No source could deliver results. Paste draws or import a CSV below.");
+      const newest = newestHistoryDraw();
+      const newestTxt = newest ? newest.date.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }) : "none";
+      if (!okSources.length) {
+        showFetchBanner("error", "No source could deliver results",
+          result.sources.map((s) => `${s.label}: ${s.note || (s.errors[0] || s.status)}`).join(" · ") + ". Paste draws or import a CSV in the Historical draws panel.", result.sources, true);
       } else if (t.missing || t.partial) {
-        showToast(`${t.missing + t.partial} week${t.missing + t.partial === 1 ? "" : "s"} still incomplete — see the data basis panel for which ones.`);
+        showFetchBanner("warn", `Fetched ${added} new draw${added === 1 ? "" : "s"} — ${t.missing + t.partial} week${t.missing + t.partial === 1 ? "" : "s"} still incomplete`,
+          `From ${okSources.join(" + ")}. Newest draw now ${newestTxt}. The data basis panel below shows which weeks are missing.`, result.sources, true);
+      } else {
+        showFetchBanner("ok", added ? `Fetched ${added} new draw${added === 1 ? "" : "s"}` : "Already up to date",
+          `From ${okSources.join(" + ")}. Newest draw ${newestTxt}; every week in your lookback window is complete.`, result.sources, true);
       }
     } catch (e) {
       setHistoryStatus(`Fetching failed unexpectedly (${e.message}). Paste draws or import a CSV/JSON file instead.`, false);
+      showFetchBanner("error", "Fetching failed", e.message, null, true);
     } finally {
       btn.disabled = false;
       btn.textContent = oldLabel;
       $("#crawl-progress").hidden = true;
     }
+  }
+
+  function showFetchBanner(stateName, title, detail, sources, done) {
+    const b = $("#fetch-banner");
+    b.hidden = false;
+    b.dataset.state = stateName;
+    b.querySelector(".fetch-banner-icon").textContent = { running: "⤓", ok: "✓", warn: "⚠", error: "✗" }[stateName] || "⤓";
+    $("#fetch-banner-title").textContent = title;
+    $("#fetch-banner-detail").textContent = detail || "";
+    $("#fetch-banner-progress").hidden = stateName !== "running";
+    $("#fetch-banner-close").hidden = !done;
+    $("#fetch-banner-details").hidden = !done;
+    const list = $("#fetch-banner-sources");
+    if (sources && sources.length) {
+      list.hidden = false;
+      list.innerHTML = "";
+      for (const src of sources) {
+        const li = document.createElement("li");
+        li.className = `src src-${src.status}`;
+        const icon = { ok: "✓", failed: "✗", empty: "–", skipped: "·", running: "…" }[src.status] || "·";
+        const d = src.status === "ok" ? `${src.draws} draw${src.draws === 1 ? "" : "s"}` : src.status === "running" ? "trying…" : (src.note || src.errors[0] || src.status);
+        li.innerHTML = `<span class="src-icon" aria-hidden="true">${icon}</span><span class="src-label">${escapeHtml(src.label)}</span><span class="src-detail">${escapeHtml(d)}</span>`;
+        list.appendChild(li);
+      }
+    } else {
+      list.hidden = true;
+    }
+  }
+
+  /** How stale the loaded history is for the active lottery. */
+  function freshnessInfo(cfg) {
+    const newest = newestHistoryDraw();
+    const today = new Date();
+    if (!newest) return { newest: null, missingSince: 0, stale: false, empty: true };
+    const missingSince = drawsExpectedBetween(cfg, newest.date, today);
+    const weeksOld = Math.floor((today - newest.date) / (7 * 86400000));
+    return { newest: newest.date, missingSince, weeksOld, stale: missingSince > 0, empty: false };
+  }
+
+  function renderFreshness() {
+    const cfg = LOTTERIES[state.lotteryId];
+    const f = freshnessInfo(cfg);
+    const el = $("#freshness-banner");
+    const btn = $("#freshness-fetch");
+    if (f.empty) {
+      el.hidden = false;
+      el.dataset.level = "empty";
+      $("#freshness-text").innerHTML = `<strong>No ${cfg.name} results loaded yet.</strong> Fetch them to use exclusions, statistics and the last-draw features.`;
+      btn.textContent = "⤓ Fetch results";
+      return;
+    }
+    if (!f.stale) {
+      el.hidden = true;
+      return;
+    }
+    el.hidden = false;
+    el.dataset.level = "stale";
+    const fmt = f.newest.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
+    $("#freshness-text").innerHTML = `<strong>Results are ${f.weeksOld} week${f.weeksOld === 1 ? "" : "s"} old.</strong> Newest loaded draw is ${fmt}; about ${f.missingSince} draw${f.missingSince === 1 ? "" : "s"} since then ${f.missingSince === 1 ? "is" : "are"} not loaded, so exclusions and statistics cannot see them.`;
+    btn.textContent = "⤓ Fetch newer results";
+  }
+
+  /** On open: fetch automatically when data is missing or stale (at most every 6 h). */
+  function maybeAutoUpdate() {
+    if (!$("#auto-update").checked) return;
+    const cfg = LOTTERIES[state.lotteryId];
+    const f = freshnessInfo(cfg);
+    if (!f.empty && !f.stale) return;
+    const lc = state.lastCollect[cfg.id];
+    if (lc && Date.now() - new Date(lc.at).getTime() < 6 * 3600 * 1000) return;
+    fetchHistoryChain();
   }
 
   function downloadDataset() {
@@ -1483,8 +1571,8 @@
       history.replaceState(null, "", location.href.split("#")[0]);
     }
 
-    $("#switch-lotto").addEventListener("click", () => switchLottery("lotto"));
-    $("#switch-eurojackpot").addEventListener("click", () => switchLottery("eurojackpot"));
+    $("#switch-lotto").addEventListener("click", () => { switchLottery("lotto"); maybeAutoUpdate(); });
+    $("#switch-eurojackpot").addEventListener("click", () => { switchLottery("eurojackpot"); maybeAutoUpdate(); });
 
     for (const id of ["bias-overdue-strength", "bias-cold-strength"]) {
       document.getElementById(id).addEventListener("input", syncBiasOutputs);
@@ -1594,6 +1682,13 @@
     $("#history-crawl").addEventListener("click", fetchHistoryChain);
     $("#history-download").addEventListener("click", downloadDataset);
     $("#coverage-fetch").addEventListener("click", fetchHistoryChain);
+    $("#freshness-fetch").addEventListener("click", fetchHistoryChain);
+    $("#fetch-banner-close").addEventListener("click", () => ($("#fetch-banner").hidden = true));
+    $("#fetch-banner-details").addEventListener("click", () => {
+      const details = document.querySelector('details[data-panel="history"]');
+      if (details) details.open = true;
+      $("#source-status-wrap").scrollIntoView({ block: "center", behavior: "smooth" });
+    });
     $("#history-demo").addEventListener("click", loadDemoData);
     $("#history-clear").addEventListener("click", () => {
       const id = state.lotteryId;
@@ -1636,6 +1731,7 @@
     restorePanels();
     updateGenerateLabel();
     switchLottery(state.lotteryId, true);
+    setTimeout(maybeAutoUpdate, 600);
     syncCriterionBodies();
     syncReuseUI();
     renderPresetState();
@@ -1658,6 +1754,7 @@
     refreshHistoryStatus();
     renderStats();
     renderCoverage();
+    renderFreshness();
     refreshLastDraw();
     renderProvenance();
     updatePanelCounts();
