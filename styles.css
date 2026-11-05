@@ -1218,3 +1218,21 @@ details[open] > summary .chevron { transform: rotate(-135deg); margin-bottom: -0
 .build { font-size: 0.7rem; color: var(--text-dim); margin: 0.6rem 0 0; font-variant-numeric: tabular-nums; }
 .hist-chip.rej { border-color: rgba(255,93,108,0.5); }
 .hist-chip.rej b { color: var(--danger); }
+
+
+/* ============ Always-visible total filtering bar (header) ============ */
+
+.topbar-filter { flex: 1 1 100%; order: 10; display: grid; grid-template-columns: auto minmax(120px, 1fr) auto; gap: 0.4rem 1rem; align-items: center; padding: 0.55rem 0.9rem; margin-top: 0.1rem; border-radius: var(--radius-sm); background: rgba(0, 0, 0, 0.28); border: 1px solid var(--panel-edge); font-size: 0.82rem; }
+.tf-main { display: flex; align-items: baseline; gap: 0.5rem; flex-wrap: wrap; }
+.tf-label { font-size: 0.68rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-dim); }
+.tf-out { font-size: 1.15rem; font-weight: 800; color: var(--danger); font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
+.tf-unit { color: var(--text-dim); }
+.tf-pct { font-size: 1.15rem; font-weight: 800; color: var(--gold); font-variant-numeric: tabular-nums; }
+.tf-bar { height: 10px; border-radius: 999px; background: rgba(255, 93, 108, 0.55); overflow: hidden; border: 1px solid var(--panel-edge); }
+.tf-bar-keep { height: 100%; width: 100%; background: linear-gradient(90deg, var(--ok), #2ea978); border-radius: 999px 0 0 999px; transition: width 0.35s ease; min-width: 2px; }
+.tf-rest { color: var(--text-dim); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tf-rest b { color: var(--ok); }
+.topbar-filter[data-state="busy"] .tf-out, .topbar-filter[data-state="busy"] .tf-pct { opacity: 0.5; }
+.topbar-filter[data-state="conflict"] .tf-out, .topbar-filter[data-state="conflict"] .tf-pct { color: var(--danger); }
+@media (max-width: 900px) { .topbar-filter { grid-template-columns: 1fr; } .tf-rest { white-space: normal; } }
+@media print { .topbar-filter { display: none !important; } }

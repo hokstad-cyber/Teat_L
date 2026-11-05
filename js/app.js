@@ -1523,8 +1523,35 @@
     scheduleDashboard();
   }
 
+  /** Header bar: total filtering from all rules, as a number and a percentage. */
+  function renderTopFilter(space) {
+    const bar = $("#topbar-filter");
+    $("#tf-total").textContent = fmtInt(space.total);
+    if (!space.feasible) {
+      bar.dataset.state = "conflict";
+      $("#tf-out").textContent = "—";
+      $("#tf-pct").textContent = "rules conflict";
+      $("#tf-keep").textContent = "0";
+      $("#tf-keep-pct").textContent = "";
+      $("#tf-bar-keep").style.width = "0%";
+      bar.title = space.problems[0];
+      return;
+    }
+    const removed = space.total - space.count;
+    const approx = space.exact ? "" : "≈ ";
+    const show = (v) => fmtInt(space.exact ? v : sig3(v));
+    bar.dataset.state = "ok";
+    bar.title = space.exact ? "Counted exactly." : `Estimate; likely between ${fmtInt(sig3(space.total - space.hi))} and ${fmtInt(sig3(space.total - space.lo))} removed.`;
+    $("#tf-out").textContent = removed <= 0 ? "0" : `−${approx}${show(removed)}`;
+    $("#tf-pct").textContent = removed <= 0 ? "0 %" : `${approx}${fmtPct(1 - space.share)}`;
+    $("#tf-keep").textContent = `${approx}${show(space.count)}`;
+    $("#tf-keep-pct").textContent = `(${approx}${fmtPct(space.share)})`;
+    $("#tf-bar-keep").style.width = `${Math.max(0.3, space.share * 100)}%`;
+  }
+
   /** Top-of-page comparison: all possible rows vs rows that fit the rules. */
   function renderSpace(cfg, space) {
+    renderTopFilter(space);
     const card = $("#space-card");
     const oneIn = fmtInt(space.total);
     $("#space-total").textContent = fmtInt(space.total);

@@ -3,9 +3,9 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="build" content="98afc59" />
+  <meta name="build" content="3c70333" />
   <title>LykkeTall — Smart Lottery Number Picker</title>
-  <link rel="stylesheet" href="styles.css?v=8fdb15ad" />
+  <link rel="stylesheet" href="styles.css?v=fa465962" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='45' fill='%23e8336d'/><text x='50' y='64' font-size='44' text-anchor='middle' fill='white' font-family='Arial'>7</text></svg>" />
 </head>
 <body data-lottery="lotto">
@@ -32,6 +32,16 @@
         <span class="dot dot-euro"></span> Eurojackpot
         <small>5 of 50 + 2 stars</small>
       </button>
+    </div>
+    <div class="topbar-filter" id="topbar-filter" role="status" aria-label="Total filtering from all rules" data-state="busy">
+      <div class="tf-main">
+        <span class="tf-label">Total filtering</span>
+        <strong class="tf-out" id="tf-out">—</strong>
+        <span class="tf-unit">rows removed</span>
+        <strong class="tf-pct" id="tf-pct">—</strong>
+      </div>
+      <div class="tf-bar" aria-hidden="true"><div class="tf-bar-keep" id="tf-bar-keep"></div></div>
+      <div class="tf-rest"><b id="tf-keep">—</b> of <span id="tf-total">—</span> rows remain <span id="tf-keep-pct"></span></div>
     </div>
   </header>
 
@@ -677,6 +687,6 @@
   <script src="js/history.js?v=6d050857"></script>
   <script src="js/crawler.js?v=320e4439"></script>
   <script src="js/generator.js?v=4ed6fb67"></script>
-  <script src="js/app.js?v=632ee3fe"></script>
+  <script src="js/app.js?v=bd1330d3"></script>
 </body>
 </html>
