@@ -17,6 +17,9 @@ const LOTTERIES = {
     defaultSumMin: 90,
     defaultSumMax: 155,
     zoneSize: 10,
+    drawsPerWeek: 1,
+    // Default price per row in NOK; user-editable because prices change.
+    defaultRowPrice: 6,
     crawl: {
       api: "https://www.norsk-tipping.no/api-lotto/getResultInfo.json",
       pages: [
@@ -40,6 +43,8 @@ const LOTTERIES = {
     defaultSumMin: 95,
     defaultSumMax: 160,
     zoneSize: 10,
+    drawsPerWeek: 2,
+    defaultRowPrice: 25,
     crawl: {
       api: "https://www.norsk-tipping.no/api-eurojackpot/getResultInfo.json",
       pages: [
@@ -58,4 +63,16 @@ function lotteryZoneCount(cfg) {
 
 function zoneOfNumber(cfg, n) {
   return Math.floor((n - 1) / cfg.zoneSize);
+}
+
+function binomial(n, k) {
+  if (k < 0 || k > n) return 0;
+  let r = 1;
+  for (let i = 1; i <= k; i++) r = (r * (n - k + i)) / i;
+  return Math.round(r);
+}
+
+/** Number of equally likely rows — the jackpot odds are 1 in this. */
+function jackpotCombinations(cfg) {
+  return binomial(cfg.mainMax, cfg.mainPick) * (cfg.starPick ? binomial(cfg.starMax, cfg.starPick) : 1);
 }

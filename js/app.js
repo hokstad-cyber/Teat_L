@@ -14,20 +14,41 @@
     lastDraw: null,
     lastDrawSet: new Set(),
     tickets: [],
-    generatedFor: null
+    generatedFor: null,
+    /** price per row in NOK per lottery (user-editable) */
+    rowPrice: { lotto: LOTTERIES.lotto.defaultRowPrice, eurojackpot: LOTTERIES.eurojackpot.defaultRowPrice },
+    /** where loaded draws came from, per lottery: [{ kind, label, count, at }] */
+    provenance: { lotto: [], eurojackpot: [] },
+    /** active preset id, or "custom" once the user changes a rule */
+    preset: null,
+    /** which collapsible panels are open */
+    panelsOpen: {}
   };
 
   const STORAGE_KEY = "lykketall.v1";
 
   /* ---------- persistence ---------- */
 
+  let panelsRestored = false;
+
   function saveState() {
+    // Read panel state from the DOM rather than trusting the async "toggle"
+    // event, which can fire after another save.
+    if (panelsRestored) {
+      for (const d of document.querySelectorAll("details[data-panel]")) state.panelsOpen[d.dataset.panel] = d.open;
+    }
     try {
       const serializable = {
         lotteryId: state.lotteryId,
         history: {},
         lastDrawOverride: state.lastDrawOverride,
-        settings: collectSettings()
+        settings: collectSettings(),
+        rowPrice: state.rowPrice,
+        provenance: state.provenance,
+        preset: state.preset,
+        panelsOpen: state.panelsOpen,
+        tickets: state.tickets,
+        generatedFor: state.generatedFor
       };
       for (const id of Object.keys(state.history)) {
         serializable.history[id] = state.history[id].map((d) => ({
@@ -78,6 +99,29 @@
       }
     }
     if (data.settings) applySettings(data.settings);
+    if (data.rowPrice && typeof data.rowPrice === "object") {
+      for (const id of Object.keys(state.rowPrice)) {
+        const v = Number(data.rowPrice[id]);
+        if (Number.isFinite(v) && v >= 0) state.rowPrice[id] = v;
+      }
+    }
+    if (data.provenance && typeof data.provenance === "object") {
+      for (const id of Object.keys(state.provenance)) {
+        if (Array.isArray(data.provenance[id])) state.provenance[id] = data.provenance[id].slice(-8);
+      }
+    }
+    if (typeof data.preset === "string") state.preset = data.preset;
+    if (data.panelsOpen && typeof data.panelsOpen === "object") state.panelsOpen = data.panelsOpen;
+    if (Array.isArray(data.tickets) && data.generatedFor && LOTTERIES[data.generatedFor]) {
+      state.tickets = data.tickets.filter((t) => t && Array.isArray(t.mains)).map((t) => ({
+        mains: t.mains,
+        stars: Array.isArray(t.stars) ? t.stars : [],
+        relaxed: !!t.relaxed,
+        relaxedRules: Array.isArray(t.relaxedRules) ? t.relaxedRules : [],
+        locked: !!t.locked
+      }));
+      state.generatedFor = data.generatedFor;
+    }
   }
 
   const SETTING_IDS = [
@@ -99,7 +143,8 @@
     "hist-window", "hist-window-years",
     "hist-exact",
     "hist-subset", "hist-subset-size",
-    "reuse-enabled", "reuse-min", "reuse-max"
+    "reuse-enabled", "reuse-min", "reuse-max",
+    "row-count"
   ];
 
   function collectSettings() {
@@ -176,7 +221,9 @@
       historyExact: { enabled: $("#hist-exact").checked },
       historySubset: { enabled: $("#hist-subset").checked },
       reuseLast: {
-        enabled: $("#reuse-enabled").checked,
+        // Reuse is a shared setting but the last draw is per lottery: without
+        // one, the rule is skipped (with a warning) instead of blocking.
+        enabled: $("#reuse-enabled").checked && !!state.lastDraw,
         min: Math.min(intVal("reuse-min", 0), intVal("reuse-max", 0)),
         max: Math.max(intVal("reuse-min", 0), intVal("reuse-max", 0)),
         numbers: state.lastDraw ? state.lastDraw.mains.slice() : []
@@ -192,8 +239,20 @@
 
   /* ---------- lottery switching ---------- */
 
-  function switchLottery(id) {
+  function rowCount() {
+    return Math.max(1, Math.min(50, intVal("row-count", 10)));
+  }
+
+  function updateGenerateLabel() {
+    const n = rowCount();
+    $("#btn-generate").textContent = `⟳ Generate ${n} row${n === 1 ? "" : "s"}`;
+  }
+
+  /** `initial` is true on page load: keep the user's saved values instead of
+      resetting lottery-dependent defaults. */
+  function switchLottery(id, initial) {
     const cfg = LOTTERIES[id];
+    const changed = !initial && state.lotteryId !== id;
     state.lotteryId = id;
     document.body.dataset.lottery = id;
     $("#switch-lotto").classList.toggle("active", id === "lotto");
@@ -201,15 +260,22 @@
     $("#switch-eurojackpot").classList.toggle("active", id === "eurojackpot");
     $("#switch-eurojackpot").setAttribute("aria-selected", id === "eurojackpot");
 
-    $("#content-title").textContent = `Your 10 rows — ${cfg.name}`;
+    $("#content-title").textContent = `Your rows — ${cfg.name}`;
+    const odds = jackpotCombinations(cfg).toLocaleString("en-GB");
     $("#content-sub").textContent =
-      cfg.starPick > 0
+      (cfg.starPick > 0
         ? `${cfg.mainPick} numbers from 1–${cfg.mainMax} + ${cfg.starPick} star numbers from 1–${cfg.starMax} · draws ${cfg.drawDay}`
-        : `${cfg.mainPick} numbers from 1–${cfg.mainMax} · draw every ${cfg.drawDay}`;
+        : `${cfg.mainPick} numbers from 1–${cfg.mainMax} · draw every ${cfg.drawDay}`) +
+      ` · jackpot odds 1 in ${odds} per row`;
+    $("#row-price").value = state.rowPrice[id];
 
-    // Refresh lottery-dependent defaults and bounds.
-    $("#crit-sum-min").value = cfg.defaultSumMin;
-    $("#crit-sum-max").value = cfg.defaultSumMax;
+    // Refresh lottery-dependent defaults and bounds (only on a real switch,
+    // so saved settings survive a reload).
+    if (changed) {
+      $("#crit-sum-min").value = cfg.defaultSumMin;
+      $("#crit-sum-max").value = cfg.defaultSumMax;
+      if (state.preset && PRESETS[state.preset]) applyPreset(state.preset, true);
+    }
     $("#crit-oddeven-min").max = cfg.mainPick;
     $("#crit-oddeven-max").max = cfg.mainPick;
     if (intVal("crit-oddeven-max", cfg.mainPick) > cfg.mainPick) $("#crit-oddeven-max").value = cfg.mainPick;
@@ -221,7 +287,6 @@
     for (const id of ["crit-arith-value", "ap-lastdigit-max", "ap-multiple-max", "ap-lowhigh-low", "ap-lowhigh-high"]) {
       $("#" + id).max = cfg.mainPick;
     }
-    const halfLow = Math.ceil(cfg.mainMax / 2);
     if (intVal("crit-arith-value", 3) > cfg.mainPick) $("#crit-arith-value").value = cfg.mainPick;
     if (intVal("ap-lastdigit-max", 3) > cfg.mainPick) $("#ap-lastdigit-max").value = cfg.mainPick;
     if (intVal("ap-multiple-max", 4) > cfg.mainPick) $("#ap-multiple-max").value = cfg.mainPick;
@@ -232,17 +297,33 @@
     if (intVal("reuse-min", 0) > cfg.mainPick) $("#reuse-min").value = 0;
     if (intVal("reuse-max", 0) > cfg.mainPick) $("#reuse-max").value = cfg.mainPick;
 
-    clearTickets();
+    // Keep restored rows on load if they belong to this lottery.
+    if (initial && state.generatedFor === id && state.tickets.length) {
+      refreshLastDraw();
+      renderTickets(cfg);
+    } else {
+      clearTickets();
+      refreshLastDraw();
+    }
     refreshHistoryStatus();
-    refreshLastDraw();
     syncReuseUI();
     renderStats();
+    renderProvenance();
+    updatePanelCounts();
+    scheduleStrictness();
     saveState();
   }
 
   /* ---------- history ---------- */
 
-  function addDraws(draws, sourceLabel) {
+  const PROVENANCE_KINDS = {
+    crawl: "unofficial Norsk Tipping data (crawled)",
+    paste: "draws you pasted",
+    file: "an imported file",
+    demo: "synthetic demo data — not real results"
+  };
+
+  function addDraws(draws, sourceLabel, kind) {
     if (!draws.length) {
       setHistoryStatus(`Could not find any valid ${LOTTERIES[state.lotteryId].name} draws in ${sourceLabel}. Check the format: one draw per line with a date and the winning numbers.`, false);
       return;
@@ -251,9 +332,68 @@
     state.history[state.lotteryId] = dedupeDraws(state.history[state.lotteryId].concat(draws));
     const added = state.history[state.lotteryId].length - before;
     refreshHistoryStatus(`Added ${added} new draw${added === 1 ? "" : "s"} from ${sourceLabel} (${draws.length - added} duplicates skipped).`);
+    if (kind) {
+      state.provenance[state.lotteryId].push({ kind, label: sourceLabel, count: added, at: new Date().toISOString() });
+      state.provenance[state.lotteryId] = state.provenance[state.lotteryId].slice(-8);
+    }
     renderStats();
     refreshLastDraw();
+    renderProvenance();
+    updatePanelCounts();
+    scheduleStrictness();
     saveState();
+  }
+
+  /** Where the loaded data came from, how much of the date range it covers,
+      and when it was loaded — shown next to everything that depends on it. */
+  function provenanceSummary() {
+    const id = state.lotteryId;
+    const cfg = LOTTERIES[id];
+    const all = state.history[id];
+    if (!all.length) return null;
+    const entries = state.provenance[id];
+    const kinds = [...new Set(entries.map((e) => e.kind))];
+    const range = drawsDateRange(all);
+    const fmt = (d) => d.toLocaleDateString("en-GB", { month: "short", year: "numeric" });
+    const last = entries.length ? new Date(entries[entries.length - 1].at) : null;
+
+    let coverage = null;
+    const dated = all.filter((d) => d.date).length;
+    if (range.min && range.max && dated > 10) {
+      const weeks = (range.max - range.min) / (7 * 86400000) + 1;
+      coverage = Math.min(1, dated / (weeks * cfg.drawsPerWeek));
+    }
+    const sources = kinds.length ? kinds.map((k) => PROVENANCE_KINDS[k] || k).join(" + ") : "earlier sessions";
+    let text = `<strong>Source:</strong> ${sources} · ${all.length} draws`;
+    if (range.min) text += ` · ${fmt(range.min)} – ${fmt(range.max)}`;
+    if (last) text += ` · loaded ${last.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}`;
+    let level = "ok";
+    if (kinds.includes("demo")) {
+      level = "demo";
+      text += ". Includes synthetic demo data, so statistics here are not real.";
+    } else if (kinds.includes("crawl")) {
+      level = "caution";
+      text += ". Unofficial source — check important numbers against Norsk Tipping.";
+    }
+    if (coverage !== null && coverage < 0.85) {
+      level = level === "demo" ? "demo" : "caution";
+      text += ` Covers only about ${Math.round(coverage * 100)}% of the draws expected in this period — the data may be incomplete.`;
+    }
+    return { text, level };
+  }
+
+  function renderProvenance() {
+    const p = provenanceSummary();
+    for (const el of [$("#history-provenance"), $("#stats-provenance")]) {
+      if (!p) {
+        el.hidden = true;
+        continue;
+      }
+      el.hidden = false;
+      el.innerHTML = p.text;
+      el.classList.toggle("caution", p.level === "caution");
+      el.classList.toggle("demo", p.level === "demo");
+    }
   }
 
   function setHistoryStatus(text, loaded) {
@@ -451,6 +591,8 @@
     const label = lo === hi ? `exactly <strong>${lo}</strong>` : `<strong>${lo}–${hi}</strong>`;
     const noun = hi === 1 && lo <= 1 ? "number" : "numbers";
     $("#reuse-summary").innerHTML = `Carry over ${label} of these ${noun} into each generated row.`;
+    $("#reuse-min").setAttribute("aria-valuetext", `at least ${lo}`);
+    $("#reuse-max").setAttribute("aria-valuetext", `at most ${hi}`);
     $("#reuse-body").classList.toggle("open", $("#reuse-enabled").checked);
   }
 
@@ -471,13 +613,14 @@
     btn.disabled = true;
     const oldLabel = btn.textContent;
     btn.textContent = "Crawling…";
+    $("#crawl-progress").hidden = false;
     try {
       setHistoryStatus(`Crawling ${cfg.name} results 2020–2026…`, false);
       const { draws, source } = await crawlLottery(cfg, (requests, message) => {
         setHistoryStatus(message || `Crawling ${cfg.name} results 2020–2026… ${requests} requests so far`, false);
       });
       downloadBlob(buildResultsCsv(draws, cfg), "text/csv", cfg.crawl.csvName);
-      addDraws(draws, `${source} — CSV "${cfg.crawl.csvName}" downloaded`);
+      addDraws(draws, `${source} — CSV "${cfg.crawl.csvName}" downloaded`, "crawl");
     } catch (e) {
       setHistoryStatus(
         `Crawling failed (${e.message}). Paste the draws in the box below, or import a CSV/JSON file instead.`,
@@ -486,6 +629,7 @@
     } finally {
       btn.disabled = false;
       btn.textContent = oldLabel;
+      $("#crawl-progress").hidden = true;
     }
   }
 
@@ -506,7 +650,7 @@
         stars: cfg.starPick > 0 ? sampleDistinct(starPool, cfg.starPick) : []
       });
     }
-    addDraws(draws, "demo data (synthetic — not real results)");
+    addDraws(draws, "demo data (synthetic — not real results)", "demo");
   }
 
   /* ---------- stats ---------- */
@@ -528,9 +672,19 @@
     for (let n = 1; n <= cfg.mainMax; n++) {
       const bar = document.createElement("div");
       bar.className = "freq-bar";
+      bar.setAttribute("aria-hidden", "true");
       bar.style.height = `${Math.round((freq[n] / maxFreq) * 100)}%`;
       bar.dataset.tip = `${n}: ${freq[n]}×`;
       chart.appendChild(bar);
+    }
+    const gapsAll = drawsSinceLastSeen(draws, cfg);
+    const tbody = $("#freq-table tbody");
+    tbody.innerHTML = "";
+    for (let n = 1; n <= cfg.mainMax; n++) {
+      const tr = document.createElement("tr");
+      const seen = gapsAll[n] >= draws.length ? "never" : String(gapsAll[n]);
+      tr.innerHTML = `<td>${n}</td><td>${freq[n]}</td><td>${seen}</td>`;
+      tbody.appendChild(tr);
     }
     const ranked = [];
     for (let n = 1; n <= cfg.mainMax; n++) ranked.push([n, freq[n]]);
@@ -538,6 +692,15 @@
     const fmtList = (pairs) => pairs.map(([n, f]) => `${n} (${f}×)`).join(", ");
     $("#hot-numbers").textContent = fmtList(ranked.slice(0, 5));
     $("#cold-numbers").textContent = fmtList(ranked.slice(-5).reverse());
+    state.hotNumbers = ranked.slice(0, 5).map(([n]) => n);
+    chart.setAttribute(
+      "aria-label",
+      `Bar chart of how often each number 1 to ${cfg.mainMax} was drawn. Most drawn: ${fmtList(ranked.slice(0, 5))}. ` +
+        `Least drawn: ${fmtList(ranked.slice(-5).reverse())}. Full values are in the table that follows.`
+    );
+    if (draws.length < 50) {
+      $("#stats-hint").textContent += ` With only ${draws.length} draws, these differences are mostly noise.`;
+    }
     const gaps = drawsSinceLastSeen(draws, cfg);
     const overdue = [];
     for (let n = 1; n <= cfg.mainMax; n++) overdue.push([n, gaps[n]]);
@@ -601,36 +764,124 @@
     return { weights, warnings };
   }
 
+  function renderEmptyState() {
+    const cfg = LOTTERIES[state.lotteryId];
+    $("#tickets").innerHTML = `
+      <div class="empty-state">
+        <div class="empty-balls" aria-hidden="true">
+          <span class="ball demo">7</span><span class="ball demo">12</span><span class="ball demo">23</span><span class="ball demo">31</span>
+        </div>
+        <h3>Ready when you are</h3>
+        <p>Pick a style under <strong>Quick setup</strong> — or just generate. You get ${cfg.name} rows that follow your rules;
+        lock the ones you like and reroll the rest.</p>
+        <button type="button" class="btn primary btn-lg" id="btn-generate-empty">⟳ Generate my rows</button>
+      </div>`;
+    $("#btn-generate-empty").addEventListener("click", generate);
+  }
+
   function clearTickets() {
     state.tickets = [];
-    $("#tickets").innerHTML =
-      '<div class="empty-state"><p>Press <strong>Generate 10 rows</strong> to pick your numbers.</p></div>';
+    state.generatedFor = null;
+    renderEmptyState();
     $("#warnings").hidden = true;
+    $("#summary-bar").hidden = true;
     for (const id of ["btn-copy", "btn-csv", "btn-print"]) $("#" + id).disabled = true;
+  }
+
+  function buildContext(cfg) {
+    const criteria = readCriteria(cfg);
+    const subsetSize = criteria.historySubset.enabled ? intVal("hist-subset-size", 4) : 0;
+    const historyIndex = buildHistoryIndex(activeDraws(), subsetSize);
+    const bias = computeBiasWeights(cfg);
+    return { criteria, historyIndex, bias };
   }
 
   function generate() {
     const cfg = LOTTERIES[state.lotteryId];
-    const criteria = readCriteria(cfg);
-    const subsetSize = criteria.historySubset.enabled ? intVal("hist-subset-size", 4) : 0;
-    const historyIndex = buildHistoryIndex(activeDraws(), subsetSize);
+    const { criteria, historyIndex, bias } = buildContext(cfg);
 
     const preWarnings = [];
-    if ((criteria.historyExact.enabled || criteria.historySubset.enabled) && historyIndex.drawCount === 0) {
+    // Only nag about missing history when the user opted into a history rule
+    // beyond the default "never repeat a full past row".
+    if (criteria.historySubset.enabled && historyIndex.drawCount === 0) {
       preWarnings.push("History-based exclusions are on, but no historical draws are loaded for this lottery — they have no effect yet.");
     }
-    const bias = computeBiasWeights(cfg);
     preWarnings.push(...bias.warnings);
+    if ($("#reuse-enabled").checked && !state.lastDraw) {
+      preWarnings.push(`Reuse from last draw is on, but no last draw is set for ${cfg.name} — it was skipped. Press Edit on the Last draw card to set one.`);
+    }
 
-    const { tickets, warnings } = generateTickets(10, cfg, criteria, historyIndex, bias.weights);
-    state.tickets = tickets;
+    // Locked rows stay in their slots; the rest are generated around them.
+    const count = rowCount();
+    const previous = state.generatedFor === cfg.id ? state.tickets : [];
+    const slots = new Array(count).fill(null);
+    const overflow = [];
+    previous.forEach((t, i) => {
+      if (!t.locked) return;
+      if (i < count) slots[i] = t;
+      else overflow.push(t);
+    });
+    for (const t of overflow) {
+      const free = slots.indexOf(null);
+      if (free === -1) slots.push(t);
+      else slots[free] = t;
+    }
+    const lockedRows = slots.filter(Boolean);
+    const need = slots.filter((x) => x === null).length;
+
+    const { tickets, warnings } = generateTickets(need, cfg, criteria, historyIndex, bias.weights, lockedRows.map((t) => t.mains));
+    let k = 0;
+    const result = slots.map((t) => t || tickets[k++] || null).filter(Boolean);
+    state.tickets = result;
     state.generatedFor = cfg.id;
 
     const allWarnings = preWarnings.concat(warnings);
-    if (allWarnings.length) showWarnings(allWarnings, tickets.length === 0);
+    if (allWarnings.length) showWarnings(allWarnings, result.length === 0);
     else $("#warnings").hidden = true;
     renderTickets(cfg);
+    if (tickets.length) announce(`${result.length} row${result.length === 1 ? "" : "s"} ready${lockedRows.length ? `, ${lockedRows.length} kept locked` : ""}.`);
     saveState();
+  }
+
+  function rerollRow(i) {
+    const cfg = LOTTERIES[state.lotteryId];
+    const { criteria, historyIndex, bias } = buildContext(cfg);
+    const others = state.tickets.filter((_, j) => j !== i).map((t) => t.mains);
+    const { tickets, warnings } = generateTickets(1, cfg, criteria, historyIndex, bias.weights, others);
+    if (!tickets.length) {
+      showToast(warnings[0] || "Could not find another row that fits your rules.");
+      return;
+    }
+    state.tickets[i] = tickets[0];
+    renderTickets(cfg);
+    focusRowAction(i, "reroll");
+    announce(`Row ${i + 1} rerolled${tickets[0].relaxed ? " (some style rules relaxed)" : ""}.`);
+    saveState();
+  }
+
+  function toggleLock(i) {
+    const t = state.tickets[i];
+    t.locked = !t.locked;
+    renderTickets(LOTTERIES[state.lotteryId]);
+    focusRowAction(i, "lock");
+    announce(`Row ${i + 1} ${t.locked ? "locked — it stays when you generate again" : "unlocked"}.`);
+    saveState();
+  }
+
+  async function copyRow(i) {
+    const t = state.tickets[i];
+    const text = t.mains.join(" ") + (t.stars.length ? " + " + t.stars.join(" ") : "");
+    try {
+      await navigator.clipboard.writeText(text);
+      showToast(`Row ${i + 1} copied: ${text}`);
+    } catch (e) {
+      showToast("Copy failed — your browser blocked clipboard access.");
+    }
+  }
+
+  function focusRowAction(i, action) {
+    const btn = document.querySelector(`.ticket[data-row="${i}"] [data-action="${action}"]`);
+    if (btn) btn.focus();
   }
 
   function showWarnings(messages, isError) {
@@ -648,29 +899,81 @@
     const wrap = $("#tickets");
     wrap.innerHTML = "";
     if (!state.tickets.length) {
-      wrap.innerHTML = '<div class="empty-state"><p>No rows could be generated — loosen the criteria and try again.</p></div>';
+      wrap.innerHTML = '<div class="empty-state"><h3>No rows fit these rules</h3><p>Loosen a rule — the Rule strictness gauge under Quick setup shows how tight your settings are.</p></div>';
       for (const id of ["btn-copy", "btn-csv", "btn-print"]) $("#" + id).disabled = true;
+      $("#summary-bar").hidden = true;
       return;
     }
     // Highlight numbers carried over from the last draw only when reuse is on.
     const highlight = $("#reuse-enabled").checked ? state.lastDrawSet : new Set();
     state.tickets.forEach((t, i) => {
       const card = document.createElement("div");
-      card.className = "ticket";
+      card.className = "ticket" + (t.locked ? " locked" : "");
+      card.dataset.row = String(i);
+      card.setAttribute("role", "group");
+      card.setAttribute("aria-label", `Row ${i + 1}`);
       card.style.setProperty("--i", i);
       const balls = t.mains
-        .map((n) => `<span class="ball${highlight.has(n) ? " carried" : ""}"${highlight.has(n) ? ' title="Carried over from the last draw"' : ""}>${n}</span>`)
+        .map((n) => highlight.has(n)
+          ? `<span class="ball carried" title="Carried over from the last draw">${n}<span class="sr-only"> (from last draw)</span></span>`
+          : `<span class="ball">${n}</span>`)
         .join("");
       const stars = t.stars.length
-        ? `<span class="star-sep">+</span>` + t.stars.map((n) => `<span class="ball star">${n}</span>`).join("")
+        ? `<span class="star-sep" aria-hidden="true">+</span><span class="sr-only">star numbers</span>` +
+          t.stars.map((n) => `<span class="ball star">${n}</span>`).join("")
         : "";
       const carried = highlight.size ? t.mains.filter((n) => highlight.has(n)).length : 0;
-      const reuseFlag = carried ? `<span class="ticket-flag" title="Numbers reused from the last draw">↻ ${carried}</span>` : "";
-      const flag = t.relaxed ? '<span class="ticket-flag" title="Style criteria were relaxed for this row">relaxed</span>' : "";
-      card.innerHTML = `<span class="ticket-no">#${i + 1}</span><span class="ticket-balls">${balls}${stars}</span>${reuseFlag}${flag}`;
+      const badges = [];
+      if (carried) badges.push(`<span class="ticket-flag">★ ${carried} from last draw</span>`);
+      if (t.relaxed) badges.push('<span class="ticket-flag warn">⚠ relaxed</span>');
+      const note = t.relaxed && t.relaxedRules && t.relaxedRules.length
+        ? `<div class="ticket-note">Relaxed to fit your exclusions: ${escapeHtml(t.relaxedRules.join(", "))}</div>`
+        : "";
+      card.innerHTML =
+        `<span class="ticket-no">#${i + 1}</span>` +
+        `<span class="ticket-balls">${balls}${stars}</span>` +
+        `<span class="ticket-badges">${badges.join("")}</span>` +
+        `<span class="ticket-actions">` +
+        `<button type="button" class="icon-btn" data-action="lock" aria-pressed="${t.locked ? "true" : "false"}" aria-label="${t.locked ? "Unlock" : "Lock"} row ${i + 1}" title="${t.locked ? "Unlock row" : "Lock row — keep it when generating again"}">${t.locked ? "🔒" : "🔓"}</button>` +
+        `<button type="button" class="icon-btn" data-action="reroll" aria-label="Reroll row ${i + 1}" title="Reroll just this row"${t.locked ? " disabled" : ""}>↻</button>` +
+        `<button type="button" class="icon-btn" data-action="copy" aria-label="Copy row ${i + 1}" title="Copy this row">⧉</button>` +
+        `</span>` +
+        note;
       wrap.appendChild(card);
     });
     for (const id of ["btn-copy", "btn-csv", "btn-print"]) $("#" + id).disabled = false;
+    renderSummary(cfg);
+  }
+
+  function renderSummary(cfg) {
+    const bar = $("#summary-bar");
+    const rows = state.tickets.length;
+    if (!rows) {
+      bar.hidden = true;
+      return;
+    }
+    bar.hidden = false;
+    const locked = state.tickets.filter((t) => t.locked).length;
+    const relaxed = state.tickets.filter((t) => t.relaxed).length;
+    const parts = [`<span class="stat"><strong>${rows}</strong> row${rows === 1 ? "" : "s"}</span>`];
+    if (locked) parts.push(`<span class="stat">🔒 <strong>${locked}</strong> locked</span>`);
+    parts.push(relaxed
+      ? `<button type="button" class="stat-warn" id="summary-relaxed">⚠ ${relaxed} relaxed — why?</button>`
+      : '<span class="stat">✓ all rows follow your rules</span>');
+    $("#summary-stats").innerHTML = parts.join("");
+    const relaxedBtn = $("#summary-relaxed");
+    if (relaxedBtn) {
+      relaxedBtn.addEventListener("click", () => {
+        const first = document.querySelector(".ticket .ticket-note");
+        const w = $("#warnings");
+        if (!w.hidden) w.scrollIntoView({ block: "center" });
+        else if (first) first.scrollIntoView({ block: "center" });
+      });
+    }
+    const price = state.rowPrice[cfg.id];
+    const total = rows * price;
+    const kr = (v) => v.toLocaleString("nb-NO", { maximumFractionDigits: 2 });
+    $("#summary-cost").textContent = `Coupon: ${rows} × ${kr(price)} kr = ${kr(total)} kr`;
   }
 
   function ticketsAsText() {
@@ -687,6 +990,7 @@
     try {
       await navigator.clipboard.writeText(ticketsAsText());
       flashButton($("#btn-copy"), "Copied ✓");
+      showToast(`Copied ${state.tickets.length} rows to the clipboard.`);
     } catch (e) {
       flashButton($("#btn-copy"), "Copy failed");
     }
@@ -710,6 +1014,242 @@
     a.download = `${cfg.id}-rows-${new Date().toISOString().slice(0, 10)}.csv`;
     a.click();
     URL.revokeObjectURL(a.href);
+    showToast(`Downloaded ${a.download}.`);
+  }
+
+  /* ---------- toast + live announcements ---------- */
+
+  let toastTimer = null;
+  function showToast(message, actionLabel, action) {
+    const el = $("#toast");
+    $("#toast-text").textContent = message;
+    const btn = $("#toast-action");
+    btn.hidden = !actionLabel;
+    btn.onclick = null;
+    if (actionLabel) {
+      btn.textContent = actionLabel;
+      btn.onclick = () => {
+        el.hidden = true;
+        action();
+      };
+    }
+    el.hidden = false;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => (el.hidden = true), actionLabel ? 8000 : 3500);
+  }
+
+  /** Screen-reader announcement without a visible toast. */
+  function announce(message) {
+    const el = $("#sr-announcer");
+    el.textContent = "";
+    // A fresh text node after a tick makes repeated messages re-announce.
+    setTimeout(() => (el.textContent = message), 50);
+  }
+
+  /* ---------- presets ---------- */
+
+  // Each preset sets the style rules only — never your excluded/required
+  // numbers, history or last-draw settings.
+  const PRESETS = {
+    balanced: {
+      label: "Balanced",
+      desc: "A natural-looking spread: no long runs, a mix of odd/even and low/high, typical sums, and no obvious patterns.",
+      apply: (cfg) => ({
+        "crit-maxrun": true, "crit-maxrun-value": 2,
+        "crit-oddeven": true, "crit-oddeven-min": cfg.mainPick === 7 ? 2 : 1, "crit-oddeven-max": cfg.mainPick === 7 ? 5 : 4,
+        "crit-sum": true, "crit-sum-min": cfg.defaultSumMin, "crit-sum-max": cfg.defaultSumMax,
+        "crit-zone": true, "crit-zone-max": 3, "crit-zone-min": 0,
+        "crit-parity": true, "crit-parity-value": 3,
+        "crit-arith": true, "crit-arith-value": 3,
+        "ap-lastdigit": true, "ap-lastdigit-max": 3,
+        "ap-multiple": true, "ap-multiple-max": 4,
+        "ap-lowhigh": true, "ap-lowhigh-low": 1, "ap-lowhigh-high": 1,
+        "crit-birthday": false, "bias-overdue": false, "bias-cold": false,
+        "crit-overlap": true, "crit-overlap-max": cfg.mainPick === 7 ? 4 : 3
+      })
+    },
+    contrarian: {
+      label: "Contrarian",
+      desc: "Steers away from the combinations crowds love — dates, runs and neat patterns — so a win is less likely to be shared. Same odds, fewer co-winners.",
+      apply: (cfg) => ({
+        ...PRESETS.balanced.apply(cfg),
+        "crit-birthday": true,
+        "ap-lastdigit-max": 2,
+        "ap-multiple-max": 3,
+        "ap-lowhigh-low": 2, "ap-lowhigh-high": 2
+      })
+    },
+    weighted: {
+      label: "Overdue & rare",
+      desc: "Balanced rules plus a boost for numbers that haven't come up lately or rarely do. Needs loaded results. A style choice — it doesn't change the odds.",
+      apply: (cfg) => ({
+        ...PRESETS.balanced.apply(cfg),
+        "bias-overdue": true, "bias-overdue-strength": 60,
+        "bias-cold": true, "bias-cold-strength": 50
+      })
+    },
+    random: {
+      label: "Pure random",
+      desc: "No style rules at all — every combination is equally likely, like Norsk Tipping's own quick pick. Rows are still never duplicated.",
+      apply: () => ({
+        "crit-maxrun": false, "crit-oddeven": false, "crit-sum": false, "crit-zone": false,
+        "crit-parity": false, "crit-arith": false, "ap-lastdigit": false, "ap-multiple": false,
+        "ap-lowhigh": false, "crit-birthday": false, "bias-overdue": false, "bias-cold": false,
+        "crit-overlap": false
+      })
+    }
+  };
+
+  function applyPreset(id, quiet) {
+    const preset = PRESETS[id];
+    if (!preset) return;
+    const values = preset.apply(LOTTERIES[state.lotteryId]);
+    for (const [key, value] of Object.entries(values)) {
+      const el = document.getElementById(key);
+      if (!el) continue;
+      if (el.type === "checkbox") el.checked = !!value;
+      else el.value = value;
+    }
+    state.preset = id;
+    syncCriterionBodies();
+    syncBiasOutputs();
+    renderPresetState();
+    updatePanelCounts();
+    scheduleStrictness();
+    saveState();
+    if (!quiet) showToast(`${preset.label} preset applied — generate to see it.`);
+  }
+
+  function renderPresetState() {
+    for (const chip of document.querySelectorAll(".chip[data-preset]")) {
+      chip.setAttribute("aria-pressed", chip.dataset.preset === state.preset ? "true" : "false");
+    }
+    const p = PRESETS[state.preset];
+    $("#preset-desc").textContent = p
+      ? p.desc
+      : state.preset === "custom"
+        ? "Custom rules — you've adjusted the settings below."
+        : "Not sure where to start? Balanced is a good default.";
+  }
+
+  /* ---------- live rule strictness ---------- */
+
+  let strictTimer = null;
+  function scheduleStrictness() {
+    clearTimeout(strictTimer);
+    strictTimer = setTimeout(updateStrictness, 250);
+  }
+
+  function updateStrictness() {
+    const cfg = LOTTERIES[state.lotteryId];
+    const { criteria, historyIndex, bias } = buildContext(cfg);
+    const box = $("#strictness");
+    const { rate, feasible, problems } = estimatePassRate(cfg, criteria, historyIndex, bias.weights, 1500);
+    let level;
+    let text;
+    if (!feasible) {
+      level = "conflict";
+      $("#strictness-value").textContent = "Conflict";
+      text = problems[0];
+    } else {
+      const pct = rate * 100;
+      $("#strictness-value").textContent = pct >= 99.5 ? "None" : pct < 0.1 ? "< 0.1% pass" : `≈ ${pct < 10 ? pct.toFixed(1) : Math.round(pct)}% pass`;
+      if (pct >= 40) {
+        level = "relaxed";
+        text = "Easy-going — most random rows already fit your rules.";
+      } else if (pct >= 5) {
+        level = "moderate";
+        text = "Moderate — your rules filter out many random rows, rows still generate instantly.";
+      } else if (pct >= 0.5) {
+        level = "strict";
+        text = "Strict — only a small share of rows fit. Still fine, but adding more rules may force some to be relaxed.";
+      } else {
+        level = "strict";
+        text = "Very strict — expect some rows to be relaxed. Loosen a rule if you want every row to comply.";
+      }
+    }
+    box.dataset.level = level;
+    $("#strictness-fill").style.width = feasible ? `${Math.max(3, Math.min(100, Math.round(rate * 100)))}%` : "100%";
+    $("#strictness-text").textContent = text;
+  }
+
+  /* ---------- collapsible panels ---------- */
+
+  function updatePanelCounts() {
+    for (const details of document.querySelectorAll("details[data-panel]")) {
+      const key = details.dataset.panel;
+      const badge = details.querySelector(`[data-count-for="${key}"]`);
+      if (key === "history") {
+        const n = state.history[state.lotteryId].length;
+        badge.textContent = n ? `${n} draws` : "none loaded";
+        badge.classList.toggle("on", n > 0);
+        continue;
+      }
+      const toggles = details.querySelectorAll('.toggle input[type="checkbox"]');
+      const on = [...toggles].filter((t) => t.checked).length;
+      badge.textContent = `${on} of ${toggles.length} on`;
+      badge.classList.toggle("on", on > 0);
+    }
+  }
+
+  function restorePanels() {
+    for (const details of document.querySelectorAll("details[data-panel]")) {
+      details.open = !!state.panelsOpen[details.dataset.panel];
+      details.addEventListener("toggle", () => {
+        state.panelsOpen[details.dataset.panel] = details.open;
+        syncPanelToggleButton();
+        saveState();
+      });
+    }
+    panelsRestored = true;
+    syncPanelToggleButton();
+  }
+
+  function syncPanelToggleButton() {
+    const all = [...document.querySelectorAll("details[data-panel]")];
+    const anyClosed = all.some((d) => !d.open);
+    const btn = $("#btn-toggle-panels");
+    btn.textContent = anyClosed ? "Expand all" : "Collapse all";
+    btn.setAttribute("aria-expanded", anyClosed ? "false" : "true");
+  }
+
+  /* ---------- shareable settings link ---------- */
+
+  function settingsToHash() {
+    const payload = { v: 1, lottery: state.lotteryId, preset: state.preset, settings: collectSettings() };
+    const json = JSON.stringify(payload);
+    const b64 = btoa(unescape(encodeURIComponent(json))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    return "#s=" + b64;
+  }
+
+  function readHashSettings() {
+    const m = location.hash.match(/^#s=([A-Za-z0-9_-]+)$/);
+    if (!m) return null;
+    try {
+      const b64 = m[1].replace(/-/g, "+").replace(/_/g, "/");
+      const json = decodeURIComponent(escape(atob(b64 + "===".slice((b64.length + 3) % 4))));
+      const data = JSON.parse(json);
+      return data && data.v === 1 && data.settings && typeof data.settings === "object" ? data : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  async function shareSettings() {
+    const url = location.href.split("#")[0] + settingsToHash();
+    try {
+      await navigator.clipboard.writeText(url);
+      showToast("Settings link copied — anyone opening it gets the same rules (not your history).");
+    } catch (e) {
+      history.replaceState(null, "", url);
+      showToast("Couldn't access the clipboard — the link is now in the address bar.");
+    }
+  }
+
+  function syncBiasOutputs() {
+    for (const [slider, out] of [["bias-overdue-strength", "bias-overdue-out"], ["bias-cold-strength", "bias-cold-out"]]) {
+      document.getElementById(out).textContent = document.getElementById(slider).value + " %";
+    }
   }
 
   /* ---------- event wiring ---------- */
@@ -723,17 +1263,33 @@
 
   function init() {
     loadState();
+    const shared = readHashSettings();
+    if (shared) {
+      applySettings(shared.settings);
+      if (shared.lottery && LOTTERIES[shared.lottery]) state.lotteryId = shared.lottery;
+      state.preset = typeof shared.preset === "string" ? shared.preset : "custom";
+      history.replaceState(null, "", location.href.split("#")[0]);
+    }
 
     $("#switch-lotto").addEventListener("click", () => switchLottery("lotto"));
     $("#switch-eurojackpot").addEventListener("click", () => switchLottery("eurojackpot"));
 
-    for (const [slider, out] of [["bias-overdue-strength", "bias-overdue-out"], ["bias-cold-strength", "bias-cold-out"]]) {
-      const el = document.getElementById(slider);
-      const sync = () => (document.getElementById(out).textContent = el.value + " %");
-      el.addEventListener("input", sync);
-      sync();
+    for (const id of ["bias-overdue-strength", "bias-cold-strength"]) {
+      document.getElementById(id).addEventListener("input", syncBiasOutputs);
     }
+    syncBiasOutputs();
 
+    // Any edit to a rule makes the setup "custom" and refreshes the gauges.
+    const sidebar = $(".sidebar");
+    sidebar.addEventListener("input", (e) => {
+      if (e.target.closest("details[data-panel]") && e.target.closest('details[data-panel]:not([data-panel="history"])')) {
+        if (state.preset !== "custom") {
+          state.preset = "custom";
+          renderPresetState();
+        }
+      }
+      scheduleStrictness();
+    });
     document.body.addEventListener("change", (e) => {
       if (e.target.matches("input")) {
         syncCriterionBodies();
@@ -741,14 +1297,70 @@
           refreshHistoryStatus();
           renderStats();
         }
+        updatePanelCounts();
+        scheduleStrictness();
         saveState();
       }
+    });
+
+    for (const chip of document.querySelectorAll(".chip[data-preset]")) {
+      chip.addEventListener("click", () => applyPreset(chip.dataset.preset));
+    }
+    $("#btn-share").addEventListener("click", shareSettings);
+    $("#btn-toggle-panels").addEventListener("click", () => {
+      const all = [...document.querySelectorAll("details[data-panel]")];
+      const open = all.some((d) => !d.open);
+      for (const d of all) d.open = open;
+    });
+
+    $("#row-count").addEventListener("input", updateGenerateLabel);
+    $("#row-price").addEventListener("input", () => {
+      const v = parseFloat($("#row-price").value);
+      if (Number.isFinite(v) && v >= 0) {
+        state.rowPrice[state.lotteryId] = v;
+        renderSummary(LOTTERIES[state.lotteryId]);
+        saveState();
+      }
+    });
+
+    // Per-row actions (event delegation; rows are re-rendered often).
+    $("#tickets").addEventListener("click", (e) => {
+      const btn = e.target.closest("[data-action]");
+      const card = e.target.closest(".ticket[data-row]");
+      if (!btn || !card) return;
+      const i = parseInt(card.dataset.row, 10);
+      if (btn.dataset.action === "lock") toggleLock(i);
+      else if (btn.dataset.action === "reroll") rerollRow(i);
+      else if (btn.dataset.action === "copy") copyRow(i);
+    });
+
+    // Stats → criteria shortcuts.
+    $("#act-overdue").addEventListener("click", () => {
+      $("#bias-overdue").checked = true;
+      afterShortcut("weighting", "Favouring overdue numbers — adjust the strength under Smart weighting.");
+    });
+    $("#act-cold").addEventListener("click", () => {
+      $("#bias-cold").checked = true;
+      afterShortcut("weighting", "Favouring rarely-picked numbers — adjust it under Smart weighting.");
+    });
+    $("#act-exclude-hot").addEventListener("click", () => {
+      const cfg = LOTTERIES[state.lotteryId];
+      const prev = { checked: $("#crit-exclude").checked, value: $("#crit-exclude-list").value };
+      const merged = [...new Set(parseNumberList(prev.value, cfg.mainMax).concat(state.hotNumbers || []))].sort((a, b) => a - b);
+      $("#crit-exclude").checked = true;
+      $("#crit-exclude-list").value = merged.join(", ");
+      afterShortcut("yours", `Excluding ${merged.join(", ")}.`, () => {
+        $("#crit-exclude").checked = prev.checked;
+        $("#crit-exclude-list").value = prev.value;
+        afterShortcut("yours", "Exclusion undone.");
+      });
     });
 
     $("#btn-generate").addEventListener("click", generate);
     $("#btn-copy").addEventListener("click", copyTickets);
     $("#btn-csv").addEventListener("click", downloadCsv);
     $("#btn-print").addEventListener("click", () => window.print());
+    window.addEventListener("afterprint", () => showToast("Print dialog closed."));
 
     $("#history-parse").addEventListener("click", () => {
       const text = $("#history-paste").value;
@@ -756,24 +1368,31 @@
         setHistoryStatus("Paste some draws first.", false);
         return;
       }
-      addDraws(parseDraws(text, LOTTERIES[state.lotteryId]), "the pasted text");
+      addDraws(parseDraws(text, LOTTERIES[state.lotteryId]), "the pasted text", "paste");
       $("#history-paste").value = "";
     });
     $("#history-file").addEventListener("change", async (e) => {
       const file = e.target.files[0];
       if (!file) return;
       const text = await file.text();
-      addDraws(parseDraws(text, LOTTERIES[state.lotteryId]), `"${file.name}"`);
+      addDraws(parseDraws(text, LOTTERIES[state.lotteryId]), `"${file.name}"`, "file");
       e.target.value = "";
     });
     $("#history-crawl").addEventListener("click", crawlHistory);
     $("#history-demo").addEventListener("click", loadDemoData);
     $("#history-clear").addEventListener("click", () => {
-      state.history[state.lotteryId] = [];
-      refreshHistoryStatus();
-      renderStats();
-      refreshLastDraw();
-      saveState();
+      const id = state.lotteryId;
+      const snapshot = { history: state.history[id], provenance: state.provenance[id] };
+      if (!snapshot.history.length) return;
+      state.history[id] = [];
+      state.provenance[id] = [];
+      afterHistoryChange();
+      showToast(`Cleared ${snapshot.history.length} ${LOTTERIES[id].name} draws.`, "Undo", () => {
+        state.history[id] = snapshot.history;
+        state.provenance[id] = snapshot.provenance;
+        afterHistoryChange();
+        showToast("History restored.");
+      });
     });
 
     // Last draw editor + reuse dual-range.
@@ -793,9 +1412,41 @@
       document.getElementById(id).addEventListener("input", syncReuseUI);
     }
 
-    switchLottery(state.lotteryId);
+    // Sticky summary bar sits just below the (variable-height) sticky header.
+    const syncHeaderHeight = () =>
+      document.documentElement.style.setProperty("--header-h", $(".app-header").offsetHeight + "px");
+    syncHeaderHeight();
+    window.addEventListener("resize", syncHeaderHeight);
+
+    restorePanels();
+    updateGenerateLabel();
+    switchLottery(state.lotteryId, true);
     syncCriterionBodies();
     syncReuseUI();
+    renderPresetState();
+    if (shared) showToast("Settings loaded from the shared link.");
+  }
+
+  function afterShortcut(panel, message, undo) {
+    state.preset = "custom";
+    renderPresetState();
+    syncCriterionBodies();
+    updatePanelCounts();
+    scheduleStrictness();
+    const details = document.querySelector(`details[data-panel="${panel}"]`);
+    if (details) details.open = true;
+    saveState();
+    showToast(message, undo ? "Undo" : null, undo);
+  }
+
+  function afterHistoryChange() {
+    refreshHistoryStatus();
+    renderStats();
+    refreshLastDraw();
+    renderProvenance();
+    updatePanelCounts();
+    scheduleStrictness();
+    saveState();
   }
 
   document.addEventListener("DOMContentLoaded", init);

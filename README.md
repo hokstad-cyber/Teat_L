@@ -91,10 +91,37 @@ If the hard exclusions make the style criteria unsatisfiable, the generator rela
 the style rules for that row (never the exclusions) and flags the row as *relaxed*.
 Infeasible combinations of settings are detected and reported instead of looping.
 
+### Quick setup
+The top of the sidebar offers four **presets** — *Balanced*, *Contrarian* (avoids the
+combinations crowds love, so a win is less likely to be shared), *Overdue & rare* and
+*Pure random*. Presets set the style rules only, never your excluded/required numbers or
+history. A live **rule strictness** gauge estimates what share of random rows pass your
+current rules (and flags conflicting settings before you generate), and **Copy settings
+link** shares your exact rules as a URL — without your history. The detailed criteria
+live in collapsible panels whose headers show how many rules are on.
+
 ### Output
-Rows are rendered as lottery balls and can be **copied**, **downloaded as CSV** or
-**printed** (a print stylesheet renders clean black-on-white tickets). Settings and
-loaded history persist in `localStorage`.
+Choose how many rows to generate (1–50). Each row can be **locked** (kept when you
+generate again), **rerolled** on its own, or **copied**. A sticky summary shows the row
+count, locked rows, any rows where style rules had to be relaxed — each relaxed row names
+the exact rules it breaks — and the **coupon cost** (rows × an editable price per row;
+defaults 6 kr Lotto / 25 kr Eurojackpot, check current prices). All rows can be copied,
+downloaded as CSV or printed. Settings, rows, locks and loaded history persist in
+`localStorage`; destructive actions such as clearing history can be undone.
+
+### Trust and responsible play
+Statistics and history always show their **data provenance** — where the draws came from
+(crawled unofficial data, your paste/import, or synthetic demo data), the date range, when
+it was loaded, and a warning when the range looks incomplete. The jackpot odds for the
+selected lottery are shown next to the results, and the footer links to free help from
+Hjelpelinjen (800 800 40).
+
+### Accessibility
+Built toward WCAG 2.2 AA: text on filled surfaces meets 4.5:1 contrast, animations are
+disabled under `prefers-reduced-motion`, the frequency chart has a text summary and a full
+data table for screen readers, carried-over numbers are marked by a ★ badge (not colour
+alone), sliders and row actions have accessible names, a skip link jumps to the generator,
+and on small screens the results come before the settings.
 
 ## Implementation notes
 
@@ -105,6 +132,10 @@ loaded history persist in `localStorage`.
   *k*-combinations for O(1) lookups.
 - The logic (`js/util.js`, `js/history.js`, `js/generator.js`, `js/lotteries.js`) is
   DOM-free and unit-tested: `node test/run-tests.js`.
+- The same sampler drives generation, single-row rerolls, locked rows and the strictness
+  gauge, so the gauge reflects exactly what the generator will do.
+- A UX review with the prioritised backlog behind these features is in
+  [`docs/UX-REVIEW.md`](docs/UX-REVIEW.md).
 
 ## Fair-play disclaimer
 

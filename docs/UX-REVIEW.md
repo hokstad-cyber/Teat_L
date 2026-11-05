@@ -272,3 +272,36 @@ This is the product's core and its competitive moat. Assessed against the lotter
 ### Closing
 
 LykkeTall is already a **top-quartile** product in the hobbyist/consumer lottery-tool category on engine quality and visual craft — genuinely ahead of the shareware it competes with. The distance to "best in category" is concentrated in four cheap, high-leverage moves: **(1) a result-first first run with presets, (2) an accessibility pass to AA, (3) make the engine's honesty (relaxation, feasibility, provenance) visible, and (4) add the one decision number players actually care about — coupon cost — wrapped in responsible-play framing.** None requires rebuilding what's there; all of it builds on patterns the product already has.
+
+---
+
+## Implementation status (2026-11-05)
+
+| ID | Recommendation | Status |
+|---|---|---|
+| R1 | Reduced-motion fallback | ✅ Done |
+| R2 | Accessible frequency chart (text summary + data table) | ✅ Done |
+| R3 | Presets + collapsible criteria + results-first on mobile | ✅ Done |
+| R4 | Labelled reuse slider thumbs with `aria-valuetext` | ✅ Done |
+| R5 | AA contrast on balls, primary buttons and active tabs | ✅ Done (white on ≥ #d81b60 ≈ 4.9:1; dark on gold ≈ 8–10:1) |
+| R6 | Sticky summary with relaxed count; rows name the relaxed rules | ✅ Done |
+| R7 | Row-count control + per-row lock / reroll / copy | ✅ Done |
+| R8 | Coupon cost readout (editable price per row) | ✅ Done |
+| R9 | Data-provenance & coverage notes; undoable Clear | ✅ Done |
+| R10 | Responsible-gambling link (Hjelpelinjen) + jackpot odds | ✅ Done |
+| R11 | Inline "act on this stat" shortcuts | ✅ Done (favour overdue, favour rare, exclude 5 hottest — with undo) |
+| R12 | Named saved configurations | ◐ Partly — presets + persistent custom settings; no named library yet |
+| R13 | Live feasibility + pass-rate preview | ✅ Done (rule strictness gauge) |
+| R14 | Shareable settings URL | ✅ Done |
+| R15 | Row uniqueness / contrarian score | ⏳ Not started (P3) |
+| R16 | "Explain my coupon" | ⏳ Not started (P3) |
+
+Also fixed while implementing: saved sum-range settings were reset to defaults on every
+page load; panel open state could be lost if a save happened before the async `toggle`
+event; the `hidden` attribute was overridden by component `display` rules; the reuse rule
+blocked all generation on a lottery with no last draw (it is now skipped with a warning);
+and a coupon can no longer contain the same row twice.
+
+Still to validate with real users: the SUS target and time-on-task metrics in §J, and a
+manual NVDA / VoiceOver pass (automated checks cover structure, not the listening
+experience).

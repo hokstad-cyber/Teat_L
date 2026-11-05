@@ -8,6 +8,7 @@
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='45' fill='%23e8336d'/><text x='50' y='64' font-size='44' text-anchor='middle' fill='white' font-family='Arial'>7</text></svg>" />
 </head>
 <body data-lottery="lotto">
+  <a class="skip-link" href="#btn-generate">Skip to number generator</a>
 
   <header class="app-header">
     <div class="brand">
@@ -32,10 +33,41 @@
   <main class="layout">
 
     <!-- ============ SIDEBAR: criteria + history ============ -->
-    <aside class="sidebar">
+    <aside class="sidebar" aria-label="Settings">
 
-      <section class="panel">
-        <h2><span class="panel-icon">⚖️</span> Number balance</h2>
+      <section class="panel quick-panel" aria-labelledby="quick-title">
+        <h2 id="quick-title"><span class="panel-icon" aria-hidden="true">🚀</span> Quick setup</h2>
+        <p class="panel-hint">Pick a style to start — every rule below can still be fine-tuned.</p>
+        <div class="preset-chips" role="group" aria-label="Number style presets">
+          <button type="button" class="chip" data-preset="balanced" aria-pressed="false">Balanced</button>
+          <button type="button" class="chip" data-preset="contrarian" aria-pressed="false">Contrarian</button>
+          <button type="button" class="chip" data-preset="weighted" aria-pressed="false">Overdue &amp; rare</button>
+          <button type="button" class="chip" data-preset="random" aria-pressed="false">Pure random</button>
+        </div>
+        <p class="preset-desc" id="preset-desc"></p>
+
+        <div class="strictness" id="strictness">
+          <div class="strictness-head">
+            <span>Rule strictness</span>
+            <span class="strictness-value" id="strictness-value">—</span>
+          </div>
+          <div class="strictness-track" aria-hidden="true"><div class="strictness-fill" id="strictness-fill"></div></div>
+          <p class="mini-hint" id="strictness-text" aria-live="polite"></p>
+        </div>
+
+        <div class="btn-row">
+          <button type="button" id="btn-share" class="btn small ghost">🔗 Copy settings link</button>
+          <button type="button" id="btn-toggle-panels" class="btn small ghost" aria-expanded="false">Expand all</button>
+        </div>
+      </section>
+
+      <details class="panel collapsible" data-panel="balance">
+        <summary>
+          <h2><span class="panel-icon" aria-hidden="true">⚖️</span> Number balance</h2>
+          <span class="panel-count" data-count-for="balance"></span>
+          <span class="chevron" aria-hidden="true"></span>
+        </summary>
+        <div class="panel-body">
         <p class="panel-hint">Shape how each generated row is distributed.</p>
 
         <div class="criterion">
@@ -103,10 +135,16 @@
             <p class="mini-hint">E.g. 3: a row like 3, 7, 11, 19, … (four odd numbers in a row) is rejected.</p>
           </div>
         </div>
-      </section>
+        </div>
+      </details>
 
-      <section class="panel">
-        <h2><span class="panel-icon">🛡️</span> Popular anti-patterns</h2>
+      <details class="panel collapsible" data-panel="antipatterns">
+        <summary>
+          <h2><span class="panel-icon" aria-hidden="true">🛡️</span> Popular anti-patterns</h2>
+          <span class="panel-count" data-count-for="antipatterns"></span>
+          <span class="chevron" aria-hidden="true"></span>
+        </summary>
+        <div class="panel-body">
         <p class="panel-hint">Avoid the “obvious” combinations a lot of players pick — so a win is less likely to be shared.</p>
 
         <div class="criterion">
@@ -176,10 +214,16 @@
             <p class="mini-hint">Require at least one number above 31, since many players stick to calendar dates — fewer co-winners if you win.</p>
           </div>
         </div>
-      </section>
+        </div>
+      </details>
 
-      <section class="panel">
-        <h2><span class="panel-icon">✨</span> Smart weighting</h2>
+      <details class="panel collapsible" data-panel="weighting">
+        <summary>
+          <h2><span class="panel-icon" aria-hidden="true">✨</span> Smart weighting</h2>
+          <span class="panel-count" data-count-for="weighting"></span>
+          <span class="chevron" aria-hidden="true"></span>
+        </summary>
+        <div class="panel-body">
         <p class="panel-hint">Bias the random picks toward certain numbers. Needs loaded history.</p>
 
         <div class="criterion">
@@ -218,10 +262,16 @@
             <p class="mini-hint">Numbers drawn least often in the chosen period get a higher chance of being suggested.</p>
           </div>
         </div>
-      </section>
+        </div>
+      </details>
 
-      <section class="panel">
-        <h2><span class="panel-icon">🎯</span> Your numbers</h2>
+      <details class="panel collapsible" data-panel="yours">
+        <summary>
+          <h2><span class="panel-icon" aria-hidden="true">🎯</span> Your numbers</h2>
+          <span class="panel-count" data-count-for="yours"></span>
+          <span class="chevron" aria-hidden="true"></span>
+        </summary>
+        <div class="panel-body">
         <p class="panel-hint">Personalise the rows and keep them distinct.</p>
 
         <div class="criterion">
@@ -262,16 +312,23 @@
             </label>
           </div>
         </div>
-      </section>
+        </div>
+      </details>
 
-      <section class="panel">
-        <h2><span class="panel-icon">🕘</span> Historical draws</h2>
+      <details class="panel collapsible" data-panel="history">
+        <summary>
+          <h2><span class="panel-icon" aria-hidden="true">🕘</span> Historical draws</h2>
+          <span class="panel-count" data-count-for="history"></span>
+          <span class="chevron" aria-hidden="true"></span>
+        </summary>
+        <div class="panel-body">
         <p class="panel-hint">Load previous winning numbers and avoid repeating history.</p>
 
         <div class="history-load">
           <div class="btn-row" style="margin-bottom: 0.8rem;">
             <button id="history-crawl" class="btn small primary">⛏ Crawl 2020–2026 results</button>
           </div>
+          <progress id="crawl-progress" class="crawl-progress" hidden aria-label="Crawling results"></progress>
           <p class="mini-hint" style="margin: 0 0 0.9rem;">Crawls the Norsk Tipping results for the current lottery (norsk-tipping.no/lotteri/…/resultater and its draw API), keeps the draws from 2020–2026, downloads them as a CSV file with the date on every row, and loads them straight into the app. The site may block browser requests (CORS) — backup mirrors are tried automatically. You can also paste draws or import a CSV/JSON file below.</p>
 
           <label>Paste draws (one per line, e.g. <code>16.03.2024 1 5 12 19 23 28 31</code>)
@@ -285,7 +342,8 @@
           </div>
         </div>
 
-        <div id="history-status" class="history-status">No draws loaded.</div>
+        <div id="history-status" class="history-status" role="status">No draws loaded.</div>
+        <p class="provenance" id="history-provenance" hidden></p>
 
         <div class="criterion">
           <label class="toggle">
@@ -321,34 +379,51 @@
             <p class="mini-hint">E.g. 4: if numbers 3, 9, 17 and 25 ever appeared together in a past draw, no generated row may contain all four.</p>
           </div>
         </div>
-      </section>
+        </div>
+      </details>
 
-      <section class="panel" id="stats-panel" hidden>
-        <h2><span class="panel-icon">📊</span> Number statistics</h2>
+      <section class="panel" id="stats-panel" aria-labelledby="stats-title" hidden>
+        <h2 id="stats-title"><span class="panel-icon" aria-hidden="true">📊</span> Number statistics</h2>
         <p class="panel-hint" id="stats-hint"></p>
-        <div id="freq-chart" class="freq-chart"></div>
+        <p class="provenance" id="stats-provenance"></p>
+        <div id="freq-chart" class="freq-chart" role="img"></div>
+        <table class="sr-only" id="freq-table">
+          <caption>Main-number frequency in the active window</caption>
+          <thead><tr><th scope="col">Number</th><th scope="col">Times drawn</th><th scope="col">Draws since last seen</th></tr></thead>
+          <tbody></tbody>
+        </table>
         <div class="hotcold">
           <div><strong>Hot:</strong> <span id="hot-numbers"></span></div>
           <div><strong>Cold:</strong> <span id="cold-numbers"></span></div>
           <div><strong>Overdue:</strong> <span id="overdue-numbers"></span></div>
+        </div>
+        <div class="btn-row stat-actions">
+          <button type="button" class="btn small" id="act-overdue">Favour overdue</button>
+          <button type="button" class="btn small" id="act-cold">Favour rarely-picked</button>
+          <button type="button" class="btn small" id="act-exclude-hot">Exclude 5 hottest</button>
         </div>
       </section>
 
     </aside>
 
     <!-- ============ MAIN: generated tickets ============ -->
-    <section class="content">
+    <section class="content" aria-label="Your rows">
       <div class="content-header">
         <div>
-          <h2 id="content-title">Your 10 rows — Norsk Lotto</h2>
+          <h2 id="content-title">Your rows — Norsk Lotto</h2>
           <p id="content-sub" class="panel-hint">7 numbers from 1–34 · draw every Saturday</p>
         </div>
-        <div class="btn-row">
-          <button id="btn-generate" class="btn primary">⟳ Generate 10 rows</button>
-          <button id="btn-copy" class="btn" disabled>Copy</button>
-          <button id="btn-csv" class="btn" disabled>Download CSV</button>
-          <button id="btn-print" class="btn" disabled>Print</button>
+        <div class="generate-bar">
+          <label class="rowcount" for="row-count">Rows
+            <input type="number" id="row-count" min="1" max="50" value="10" inputmode="numeric" />
+          </label>
+          <button id="btn-generate" class="btn primary btn-lg">⟳ Generate 10 rows</button>
         </div>
+      </div>
+      <div class="export-row btn-row">
+        <button id="btn-copy" class="btn small" disabled>Copy all</button>
+        <button id="btn-csv" class="btn small" disabled>Download CSV</button>
+        <button id="btn-print" class="btn small" disabled>Print</button>
       </div>
 
       <section class="lastdraw-card" id="lastdraw-card">
@@ -399,33 +474,50 @@
           <div class="reuse-body" id="reuse-body">
             <div class="dual-range" id="reuse-range">
               <div class="dual-track"><div class="dual-fill" id="reuse-fill"></div></div>
-              <input type="range" id="reuse-min" min="0" max="7" value="0" />
-              <input type="range" id="reuse-max" min="0" max="7" value="2" />
+              <input type="range" id="reuse-min" min="0" max="7" value="0" aria-label="Minimum numbers to reuse" />
+              <input type="range" id="reuse-max" min="0" max="7" value="2" aria-label="Maximum numbers to reuse" />
             </div>
             <p class="reuse-summary" id="reuse-summary">Carry over <strong>0–2</strong> of these numbers into each generated row.</p>
           </div>
         </div>
       </section>
 
-      <div id="warnings" class="warnings" hidden></div>
-
-      <div id="tickets" class="tickets">
-        <div class="empty-state">
-          <div class="empty-balls" aria-hidden="true">
-            <span class="ball demo">7</span><span class="ball demo">12</span><span class="ball demo">23</span><span class="ball demo">31</span>
-          </div>
-          <p>Press <strong>Generate 10 rows</strong> to pick your numbers.</p>
+      <div id="summary-bar" class="summary-bar" hidden>
+        <div class="summary-stats" id="summary-stats"></div>
+        <div class="summary-cost">
+          <span id="summary-cost"></span>
+          <label class="price-input" for="row-price">kr / row
+            <input type="number" id="row-price" min="0" step="0.5" value="6" inputmode="decimal" />
+          </label>
         </div>
       </div>
 
+      <div id="warnings" class="warnings" hidden></div>
+
+      <div id="tickets" class="tickets"></div>
+      <div id="sr-announcer" class="sr-only" aria-live="polite" aria-atomic="true"></div>
+
       <footer class="disclaimer">
-        Every valid row has exactly the same odds of winning — these filters shape the <em>style</em> of your rows
-        and avoid repeating history, but cannot improve your chances. Play responsibly (18+).
-        LykkeTall is not affiliated with Norsk Tipping or Eurojackpot.
+        <p class="responsible">
+          <strong>Spill ansvarlig — play responsibly (18+).</strong>
+          Set a budget before you play. If gambling stops being fun, free and anonymous help is available from
+          <a href="https://hjelpelinjen.no" target="_blank" rel="noopener">Hjelpelinjen</a>
+          on <a href="tel:80080040">800 800 40</a>.
+        </p>
+        <p>
+          Every valid row has exactly the same odds of winning — these filters shape the <em>style</em> of your rows
+          and avoid repeating history, but cannot improve your chances.
+          LykkeTall is not affiliated with Norsk Tipping or Eurojackpot.
+        </p>
       </footer>
     </section>
 
   </main>
+
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden>
+    <span id="toast-text"></span>
+    <button type="button" id="toast-action" class="btn small" hidden></button>
+  </div>
 
   <script src="js/lotteries.js"></script>
   <script src="js/util.js"></script>

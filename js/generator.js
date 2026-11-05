@@ -108,54 +108,72 @@ function validateCriteriaFeasibility(cfg, criteria) {
   return problems;
 }
 
-/** Check a candidate row of main numbers against all enabled criteria. */
-function rowPassesCriteria(mains, cfg, criteria, historyIndex, previousRows, relaxed) {
-  if (criteria.maxRun.enabled && !relaxed && longestConsecutiveRun(mains) > criteria.maxRun.value) return false;
+/**
+ * Soft (style) rules a row breaks, as human-readable labels. These are the
+ * rules the generator may relax when the hard exclusions leave no room.
+ * With `firstOnly`, stops at the first failure (fast path for sampling).
+ */
+function softRuleFailures(mains, cfg, criteria, firstOnly) {
+  const out = [];
+  const fail = (label) => {
+    out.push(label);
+    return firstOnly;
+  };
 
-  if (criteria.oddEven.enabled && !relaxed) {
+  if (criteria.maxRun.enabled && longestConsecutiveRun(mains) > criteria.maxRun.value) {
+    if (fail(`max ${criteria.maxRun.value} in sequence`)) return out;
+  }
+  if (criteria.oddEven.enabled) {
     const odd = countOdd(mains);
-    if (odd < criteria.oddEven.minOdd || odd > criteria.oddEven.maxOdd) return false;
-  }
-
-  if (criteria.sumRange.enabled && !relaxed) {
-    const s = sumOf(mains);
-    if (s < criteria.sumRange.min || s > criteria.sumRange.max) return false;
-  }
-
-  if (criteria.zoneSpread.enabled && !relaxed) {
-    const counts = new Array(lotteryZoneCount(cfg)).fill(0);
-    for (const n of mains) {
-      const z = zoneOfNumber(cfg, n);
-      counts[z]++;
-      if (counts[z] > criteria.zoneSpread.maxPerZone) return false;
+    if (odd < criteria.oddEven.minOdd || odd > criteria.oddEven.maxOdd) {
+      if (fail(`${criteria.oddEven.minOdd}–${criteria.oddEven.maxOdd} odd numbers`)) return out;
     }
-    const min = criteria.zoneSpread.minPerZone || 0;
-    if (min > 0 && counts.some((c) => c < min)) return false;
   }
-
-  if (criteria.parityRun.enabled && !relaxed && longestParityRun(mains) > criteria.parityRun.value) return false;
-
-  if (criteria.maxArithmetic && criteria.maxArithmetic.enabled && !relaxed &&
-      longestArithmeticProgression(mains) > criteria.maxArithmetic.value) return false;
-
-  if (criteria.sameLastDigit && criteria.sameLastDigit.enabled && !relaxed &&
-      maxSameLastDigit(mains) > criteria.sameLastDigit.max) return false;
-
-  if (criteria.sharedMultiple && criteria.sharedMultiple.enabled && !relaxed &&
-      maxSharedDivisor(mains) > criteria.sharedMultiple.max) return false;
-
-  if (criteria.lowHigh && criteria.lowHigh.enabled && !relaxed) {
+  if (criteria.sumRange.enabled) {
+    const s = sumOf(mains);
+    if (s < criteria.sumRange.min || s > criteria.sumRange.max) {
+      if (fail(`sum ${criteria.sumRange.min}–${criteria.sumRange.max}`)) return out;
+    }
+  }
+  if (criteria.zoneSpread.enabled) {
+    const counts = new Array(lotteryZoneCount(cfg)).fill(0);
+    for (const n of mains) counts[zoneOfNumber(cfg, n)]++;
+    const min = criteria.zoneSpread.minPerZone || 0;
+    if (counts.some((c) => c > criteria.zoneSpread.maxPerZone) || (min > 0 && counts.some((c) => c < min))) {
+      if (fail("zone spread")) return out;
+    }
+  }
+  if (criteria.parityRun.enabled && longestParityRun(mains) > criteria.parityRun.value) {
+    if (fail(`odd/even streak ≤ ${criteria.parityRun.value}`)) return out;
+  }
+  if (criteria.maxArithmetic && criteria.maxArithmetic.enabled &&
+      longestArithmeticProgression(mains) > criteria.maxArithmetic.value) {
+    if (fail(`arithmetic progression ≤ ${criteria.maxArithmetic.value}`)) return out;
+  }
+  if (criteria.sameLastDigit && criteria.sameLastDigit.enabled &&
+      maxSameLastDigit(mains) > criteria.sameLastDigit.max) {
+    if (fail(`same last digit ≤ ${criteria.sameLastDigit.max}`)) return out;
+  }
+  if (criteria.sharedMultiple && criteria.sharedMultiple.enabled &&
+      maxSharedDivisor(mains) > criteria.sharedMultiple.max) {
+    if (fail(`multiples of one number ≤ ${criteria.sharedMultiple.max}`)) return out;
+  }
+  if (criteria.lowHigh && criteria.lowHigh.enabled) {
     const half = Math.ceil(cfg.mainMax / 2);
     let low = 0;
     for (const n of mains) if (n <= half) low++;
-    if (low < criteria.lowHigh.minLow || mains.length - low < criteria.lowHigh.minHigh) return false;
+    if (low < criteria.lowHigh.minLow || mains.length - low < criteria.lowHigh.minHigh) {
+      if (fail("low/high balance")) return out;
+    }
   }
-
-  if (criteria.birthdayBias.enabled && !relaxed) {
-    if (!mains.some((n) => n > 31)) return false;
+  if (criteria.birthdayBias.enabled && !mains.some((n) => n > 31)) {
+    if (fail("a number above 31")) return out;
   }
+  return out;
+}
 
-  // Hard constraints below are never relaxed.
+/** Hard constraints: never relaxed. */
+function rowPassesHardRules(mains, criteria, historyIndex, previousRows) {
   if (criteria.requireNumbers.enabled) {
     for (const n of criteria.requireNumbers.numbers) {
       if (!mains.includes(n)) return false;
@@ -188,6 +206,12 @@ function rowPassesCriteria(mains, cfg, criteria, historyIndex, previousRows, rel
   return true;
 }
 
+/** Check a candidate row of main numbers against all enabled criteria. */
+function rowPassesCriteria(mains, cfg, criteria, historyIndex, previousRows, relaxed) {
+  if (!relaxed && softRuleFailures(mains, cfg, criteria, true).length) return false;
+  return rowPassesHardRules(mains, criteria, historyIndex, previousRows);
+}
+
 /** How many last-draw numbers to carry into the next row, picked at random
     within the feasible band. Returns null if infeasible. */
 function chooseReuseCount(reuseLast, required, lastPoolSize, otherPoolSize, need) {
@@ -200,30 +224,18 @@ function chooseReuseCount(reuseLast, required, lastPoolSize, otherPoolSize, need
 }
 
 /**
- * Generate `count` rows. Returns { tickets, warnings }.
- * Each ticket: { mains, stars, relaxed }.
- * If the soft (style) criteria can't be met after many attempts, they are
- * relaxed for that row — hard exclusions (history, required numbers,
- * batch overlap, excluded numbers) are never relaxed.
- *
- * `weights` (optional): array indexed 1..mainMax of relative sampling
- * weights for the main numbers, used to bias the suggestions towards e.g.
- * overdue or rarely-drawn numbers. Null/undefined means uniform sampling.
+ * Build a sampler for candidate rows of main numbers that honours excluded
+ * and required numbers, the reuse-from-last-draw split and optional weights.
+ * Returns a function producing a sorted row, or null when reuse is
+ * infeasible.
  */
-function generateTickets(count, cfg, criteria, historyIndex, weights) {
-  const warnings = [];
-  const problems = validateCriteriaFeasibility(cfg, criteria);
-  if (problems.length) return { tickets: [], warnings: problems };
-
+function makeRowSampler(cfg, criteria, weights) {
   const excluded = new Set(criteria.excludeNumbers.enabled ? criteria.excludeNumbers.numbers : []);
   const required = criteria.requireNumbers.enabled ? criteria.requireNumbers.numbers.slice() : [];
   const pool = [];
   for (let n = 1; n <= cfg.mainMax; n++) {
     if (!excluded.has(n) && !required.includes(n)) pool.push(n);
   }
-  const starPool = [];
-  for (let n = 1; n <= cfg.starMax; n++) starPool.push(n);
-
   // Reuse-from-last-draw splits the pool so each row can carry over a chosen
   // number of last-draw numbers by construction.
   const reuse = criteria.reuseLast && criteria.reuseLast.enabled && criteria.reuseLast.numbers.length
@@ -234,31 +246,62 @@ function generateTickets(count, cfg, criteria, historyIndex, weights) {
   const otherPool = reuse ? pool.filter((n) => !lastSet.has(n)) : null;
   const weightOf = weights ? (n) => weights[n] || 1 : null;
   const pick = (arr, k) => (weightOf ? weightedSampleDistinct(arr, k, weightOf) : sampleDistinct(arr, k));
+  const pickCount = cfg.mainPick - required.length;
+
+  return function sampleRow() {
+    let sampled;
+    if (reuse) {
+      const a = chooseReuseCount(reuse, required, lastPool.length, otherPool.length, pickCount);
+      if (a === null) return null;
+      sampled = pick(lastPool, a).concat(pick(otherPool, pickCount - a));
+    } else {
+      sampled = pick(pool, pickCount);
+    }
+    return sampled.concat(required).sort((a, b) => a - b);
+  };
+}
+
+/**
+ * Generate `count` rows. Returns { tickets, warnings }.
+ * Each ticket: { mains, stars, relaxed, relaxedRules }.
+ * If the soft (style) criteria can't be met after many attempts, they are
+ * relaxed for that row — hard exclusions (history, required numbers,
+ * batch overlap, excluded numbers) are never relaxed. `relaxedRules` names
+ * the style rules the accepted row actually breaks.
+ *
+ * `weights` (optional): array indexed 1..mainMax of relative sampling
+ * weights for the main numbers, used to bias the suggestions towards e.g.
+ * overdue or rarely-drawn numbers. Null/undefined means uniform sampling.
+ *
+ * `seedRows` (optional): rows already on the coupon (e.g. locked rows) that
+ * new rows must keep their distance from (batch overlap) and not duplicate.
+ */
+function generateTickets(count, cfg, criteria, historyIndex, weights, seedRows) {
+  const warnings = [];
+  const problems = validateCriteriaFeasibility(cfg, criteria);
+  if (problems.length) return { tickets: [], warnings: problems };
+
+  const sampleRow = makeRowSampler(cfg, criteria, weights);
+  const starPool = [];
+  for (let n = 1; n <= cfg.starMax; n++) starPool.push(n);
 
   const tickets = [];
-  const previousRows = [];
+  const previousRows = (seedRows || []).map((r) => r.slice());
+  const taken = new Set(previousRows.map((r) => r.join("-")));
 
   for (let t = 0; t < count; t++) {
     let ticket = null;
-    let relaxed = false;
     const softBudget = Math.floor(MAX_ATTEMPTS_PER_ROW * 0.6);
 
     for (let attempt = 0; attempt < MAX_ATTEMPTS_PER_ROW; attempt++) {
       const useRelaxed = attempt >= softBudget;
-      const pickCount = cfg.mainPick - required.length;
-      let sampled;
-      if (reuse) {
-        const a = chooseReuseCount(reuse, required, lastPool.length, otherPool.length, pickCount);
-        if (a === null) break; // infeasible (also reported by validation)
-        sampled = pick(lastPool, a).concat(pick(otherPool, pickCount - a));
-      } else {
-        sampled = pick(pool, pickCount);
-      }
-      const mains = sampled.concat(required).sort((a, b) => a - b);
+      const mains = sampleRow();
+      if (mains === null) break; // infeasible (also reported by validation)
+      if (taken.has(mains.join("-"))) continue;
       if (rowPassesCriteria(mains, cfg, criteria, historyIndex, previousRows, useRelaxed)) {
         const stars = cfg.starPick > 0 ? sampleDistinct(starPool, cfg.starPick) : [];
-        ticket = { mains, stars, relaxed: useRelaxed };
-        relaxed = useRelaxed;
+        const relaxedRules = useRelaxed ? softRuleFailures(mains, cfg, criteria, false) : [];
+        ticket = { mains, stars, relaxed: relaxedRules.length > 0, relaxedRules };
         break;
       }
     }
@@ -270,12 +313,33 @@ function generateTickets(count, cfg, criteria, historyIndex, weights) {
       );
       break;
     }
-    if (relaxed) {
-      warnings.push(`Row ${t + 1}: style criteria (balance, spread and anti-patterns) were relaxed to satisfy the exclusion rules.`);
+    if (ticket.relaxed) {
+      warnings.push(`Row ${t + 1}: relaxed ${ticket.relaxedRules.join(", ")} to satisfy the exclusion rules.`);
     }
     tickets.push(ticket);
     previousRows.push(ticket.mains);
+    taken.add(ticket.mains.join("-"));
   }
 
   return { tickets, warnings };
+}
+
+/**
+ * Estimate the share of candidate rows (drawn by the real sampler) that pass
+ * every style rule and the history/required rules — a live "how strict are
+ * my settings" gauge. Batch overlap is ignored (it depends on the coupon).
+ * Returns { rate, feasible, problems }.
+ */
+function estimatePassRate(cfg, criteria, historyIndex, weights, samples) {
+  const problems = validateCriteriaFeasibility(cfg, criteria);
+  if (problems.length) return { rate: 0, feasible: false, problems };
+  const sampleRow = makeRowSampler(cfg, criteria, weights);
+  const n = samples || 2000;
+  let pass = 0;
+  for (let i = 0; i < n; i++) {
+    const mains = sampleRow();
+    if (mains === null) return { rate: 0, feasible: false, problems: ["Reuse settings cannot be satisfied."] };
+    if (rowPassesCriteria(mains, cfg, criteria, historyIndex, [], false)) pass++;
+  }
+  return { rate: pass / n, feasible: true, problems: [] };
 }

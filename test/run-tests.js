@@ -31,13 +31,13 @@ const {
   overlapCount, parseDrawsText, parseDraws, filterDrawsByYears, buildHistoryIndex,
   dedupeDraws, generateTickets, buildResultsCsv, longestParityRun, longestArithmeticProgression,
   maxSameLastDigit, maxSharedDivisor, zoneOfNumber, weightedSampleDistinct,
-  drawsSinceLastSeen
+  drawsSinceLastSeen, softRuleFailures, estimatePassRate
 } = vm.runInContext(
   `({ LOTTERIES, sampleDistinct, combinationKeys, longestConsecutiveRun, sumOf, countOdd,
       overlapCount, parseDrawsText, parseDraws, filterDrawsByYears, buildHistoryIndex,
       dedupeDraws, generateTickets, buildResultsCsv, longestParityRun, longestArithmeticProgression,
       maxSameLastDigit, maxSharedDivisor, zoneOfNumber, weightedSampleDistinct,
-      drawsSinceLastSeen })`,
+      drawsSinceLastSeen, softRuleFailures, estimatePassRate })`,
   context
 );
 
@@ -234,9 +234,56 @@ for (const cfg of [lotto, euro]) {
   crit.zoneSpread.enabled = false;
   crit.batchOverlap.enabled = false;
   crit.historySubset.enabled = false;
-  const { tickets } = generateTickets(3, cfg, crit, idx);
-  assert(tickets.length === 3, "tiny pool: still generates");
+  const { tickets } = generateTickets(1, cfg, crit, idx);
+  assert(tickets.length === 1, "tiny pool: still generates");
   assert(tickets.every((t) => t.mains.join("-") === allowed), "exact-row exclusion leaves only the allowed combo");
+  // A coupon never repeats a row, so a second row is impossible here.
+  const two = generateTickets(2, cfg, crit, idx);
+  assert(two.tickets.length === 1 && two.warnings.length === 1, "tiny pool: duplicate row refused with a warning");
+}
+
+/* seed rows (locked rows): new rows respect overlap with them and never duplicate them */
+{
+  const locked = [[3, 9, 17, 21, 25, 28, 31]];
+  const crit = defaultCriteria(lotto);
+  const { tickets } = generateTickets(9, lotto, crit, buildHistoryIndex([], 0), null, locked);
+  assert(tickets.length === 9, "seedRows: generates the remaining rows");
+  assert(tickets.every((t) => overlapCount(t.mains, locked[0]) <= crit.batchOverlap.maxShared),
+    "seedRows: overlap limit applies against locked rows");
+}
+
+/* relaxed rows name the rules they break; rows passing everything are not flagged */
+{
+  const crit = defaultCriteria(lotto);
+  crit.sumRange = { enabled: true, min: 220, max: 238 }; // only the very top rows can pass
+  crit.requireNumbers = { enabled: true, numbers: [1, 2] }; // makes that sum impossible
+  const { tickets } = generateTickets(3, lotto, crit, buildHistoryIndex([], 0));
+  assert(tickets.length === 3, "relaxed: still generates");
+  assert(tickets.every((t) => t.relaxed && t.relaxedRules.some((r) => /sum/.test(r))),
+    "relaxed: rows list the sum rule they had to break");
+  const easy = generateTickets(5, lotto, defaultCriteria(lotto), buildHistoryIndex([], 0));
+  assert(easy.tickets.every((t) => t.relaxed === (t.relaxedRules.length > 0)), "relaxed flag matches named rules");
+}
+
+/* softRuleFailures explains violations */
+{
+  const crit = defaultCriteria(lotto);
+  const fails = softRuleFailures([1, 2, 3, 4, 5, 6, 7], lotto, crit, false);
+  assert(fails.some((f) => /sequence/.test(f)) && fails.some((f) => /sum/.test(f)), "softRuleFailures: names sequence and sum");
+  assert(softRuleFailures([1, 2, 3, 4, 5, 6, 7], lotto, crit, true).length === 1, "softRuleFailures: firstOnly stops early");
+}
+
+/* pass-rate estimate */
+{
+  const loose = estimatePassRate(lotto, defaultCriteria(lotto), buildHistoryIndex([], 0), null, 1500);
+  assert(loose.feasible && loose.rate > 0.02 && loose.rate < 1, `passRate: default settings give a sensible share (${loose.rate.toFixed(3)})`);
+  const none = defaultCriteria(lotto);
+  for (const k of ["maxRun", "oddEven", "sumRange", "zoneSpread", "parityRun", "maxArithmetic", "sameLastDigit", "sharedMultiple"]) none[k].enabled = false;
+  assert(estimatePassRate(lotto, none, buildHistoryIndex([], 0), null, 500).rate === 1, "passRate: no rules means every row passes");
+  const bad = defaultCriteria(lotto);
+  bad.lowHigh = { enabled: true, minLow: 5, minHigh: 5 };
+  const r = estimatePassRate(lotto, bad, buildHistoryIndex([], 0), null, 100);
+  assert(!r.feasible && r.problems.length > 0, "passRate: infeasible settings reported");
 }
 
 /* required + excluded numbers */
