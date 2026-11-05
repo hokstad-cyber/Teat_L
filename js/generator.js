@@ -286,6 +286,7 @@ function generateTickets(count, cfg, criteria, historyIndex, weights, seedRows) 
   for (let n = 1; n <= cfg.starMax; n++) starPool.push(n);
 
   const tickets = [];
+  let diagnosis = null;
   const previousRows = (seedRows || []).map((r) => r.slice());
   const taken = new Set(previousRows.map((r) => r.join("-")));
 
@@ -311,6 +312,8 @@ function generateTickets(count, cfg, criteria, historyIndex, weights, seedRows) 
         `Row ${t + 1}: could not satisfy the hard exclusions after ${MAX_ATTEMPTS_PER_ROW} attempts. ` +
           "Try a smaller combination size, a shorter history window, or fewer constraints."
       );
+      diagnosis = diagnoseRejections(cfg, criteria, historyIndex, previousRows, weights, 3000);
+      diagnosis.failedRow = t + 1;
       break;
     }
     if (ticket.relaxed) {
@@ -321,7 +324,7 @@ function generateTickets(count, cfg, criteria, historyIndex, weights, seedRows) 
     taken.add(ticket.mains.join("-"));
   }
 
-  return { tickets, warnings };
+  return { tickets, warnings, diagnosis };
 }
 
 /**
@@ -602,4 +605,96 @@ function historicalImpact(cfg, criteria, draws) {
     if (passAll) allPass++;
   });
   return { total: sorted.length, rules, allPass, evaluated };
+}
+
+/* ======================= Why do rows fail? ======================= */
+
+function overlapRuleInfo(c) {
+  return { id: "batchOverlap", group: "Your numbers", name: "Overlap between your rows", label: `≤ ${c.batchOverlap.maxShared} shared numbers` };
+}
+
+/**
+ * Sample candidate rows exactly as the generator does and record which
+ * enabled rules reject them. Used to explain a failed or struggling
+ * generation. Per rule: `share` rejected, `sole` rejected only by that rule.
+ * Reuse and required/excluded numbers are met by construction.
+ */
+function diagnoseRejections(cfg, criteria, historyIndex, previousRows, weights, samples) {
+  const sampleRow = makeRowSampler(cfg, criteria, weights);
+  const catalog = ruleCatalog(cfg, criteria, historyIndex).filter((r) => r.enabled && r.id !== "reuseLast");
+  const tests = catalog.map((r) => {
+    const only = criteriaOnly(criteria, r.id);
+    const soft = SOFT_RULE_KEYS.includes(r.id);
+    return Object.assign({}, r, {
+      kind: soft ? "style" : "hard",
+      test: soft ? (m) => softRuleFailures(m, cfg, only, true).length === 0 : (m) => rowPassesHardRules(m, only, historyIndex, [])
+    });
+  });
+  if (criteria.batchOverlap.enabled && previousRows && previousRows.length) {
+    const info = overlapRuleInfo(criteria);
+    tests.push(Object.assign({}, info, { enabled: true, kind: "hard", test: (m) => previousRows.every((p) => overlapCount(p, m) <= criteria.batchOverlap.maxShared) }));
+  }
+  const n = samples || 3000;
+  const rej = new Array(tests.length).fill(0);
+  const sole = new Array(tests.length).fill(0);
+  let passAll = 0;
+  let passHard = 0;
+  let used = 0;
+  for (let s = 0; s < n; s++) {
+    const m = sampleRow();
+    if (m === null) break;
+    used++;
+    let failedCount = 0;
+    let lastFailed = -1;
+    let hardFailed = false;
+    for (let i = 0; i < tests.length; i++) {
+      if (!tests[i].test(m)) {
+        rej[i]++;
+        failedCount++;
+        lastFailed = i;
+        if (tests[i].kind === "hard") hardFailed = true;
+      }
+    }
+    if (failedCount === 1) sole[lastFailed]++;
+    if (!failedCount) passAll++;
+    if (!hardFailed) passHard++;
+  }
+  const rules = tests.map((t, i) => ({
+    id: t.id, group: t.group, name: t.name, label: t.label, kind: t.kind,
+    share: used ? rej[i] / used : 0, sole: used ? sole[i] / used : 0
+  })).sort((a, b) => b.share - a.share);
+  return { tested: used, passAll: used ? passAll / used : 0, passHard: used ? passHard / used : 0, rules };
+}
+
+/**
+ * How strict is each rule against all possible rows? Share of uniformly
+ * sampled rows each rule rejects on its own — for every rule, switched on
+ * or not, so it can be previewed. Rules with nothing to test (history
+ * rules without history) are omitted.
+ */
+function ruleStrictness(cfg, criteria, historyIndex, samples) {
+  if (validateCriteriaFeasibility(cfg, criteria).length) return {};
+  const sampleRow = makeRowSampler(cfg, criteria, null);
+  const hist = historyIndex && historyIndex.drawCount > 0;
+  const keys = SOFT_RULE_KEYS.slice();
+  if (hist) keys.push("historyExact");
+  if (hist && historyIndex.subsetSize > 0) keys.push("historySubset");
+  const tests = keys.map((k) => {
+    const only = criteriaOnly(criteria, k);
+    const soft = SOFT_RULE_KEYS.includes(k);
+    return { k, test: soft ? (m) => softRuleFailures(m, cfg, only, true).length === 0 : (m) => rowPassesHardRules(m, only, historyIndex, []) };
+  });
+  const n = samples || 4000;
+  const rej = {};
+  for (const t of tests) rej[t.k] = 0;
+  let used = 0;
+  for (let s = 0; s < n; s++) {
+    const m = sampleRow();
+    if (m === null) break;
+    used++;
+    for (const t of tests) if (!t.test(m)) rej[t.k]++;
+  }
+  const out = {};
+  for (const t of tests) out[t.k] = used ? rej[t.k] / used : 0;
+  return out;
 }

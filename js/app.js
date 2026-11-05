@@ -1084,6 +1084,7 @@
     state.generatedFor = null;
     renderEmptyState();
     $("#warnings").hidden = true;
+    $("#diagnosis").hidden = true;
     $("#summary-bar").hidden = true;
     for (const id of ["btn-copy", "btn-csv", "btn-print"]) $("#" + id).disabled = true;
   }
@@ -1129,7 +1130,7 @@
     const lockedRows = slots.filter(Boolean);
     const need = slots.filter((x) => x === null).length;
 
-    const { tickets, warnings } = generateTickets(need, cfg, criteria, historyIndex, bias.weights, lockedRows.map((t) => t.mains));
+    const { tickets, warnings, diagnosis } = generateTickets(need, cfg, criteria, historyIndex, bias.weights, lockedRows.map((t) => t.mains));
     let k = 0;
     const result = slots.map((t) => t || tickets[k++] || null).filter(Boolean);
     state.tickets = result;
@@ -1139,6 +1140,7 @@
     if (allWarnings.length) showWarnings(allWarnings, result.length === 0);
     else $("#warnings").hidden = true;
     renderTickets(cfg);
+    renderDiagnosis(diagnosis, result.length > 0);
     if (tickets.length) announce(`${result.length} row${result.length === 1 ? "" : "s"} ready${lockedRows.length ? `, ${lockedRows.length} kept locked` : ""}.`);
     saveState();
   }
@@ -1182,6 +1184,31 @@
   function focusRowAction(i, action) {
     const btn = document.querySelector(`.ticket[data-row="${i}"] [data-action="${action}"]`);
     if (btn) btn.focus();
+  }
+
+  function renderDiagnosis(d, produced) {
+    const box = $("#diagnosis");
+    if (!d || !d.tested) { box.hidden = true; return; }
+    box.hidden = false;
+    $("#diag-title").textContent = produced ? `Why row ${d.failedRow} could not be found` : "Why no row could be found";
+    const hard = d.rules.filter((r) => r.kind === "hard");
+    const main = (hard.length ? hard : d.rules)[0];
+    const pass = d.passAll;
+    $("#diag-sum").innerHTML = `Of <b>${fmtInt(d.tested)}</b> candidate rows, only <b>${fmtPct(pass)}</b> pass every rule` +
+      (main ? ` — the biggest blocker is <b>${escapeHtml(main.name)}</b>, which rejects <b>${fmtPct(main.share)}</b>` : "") + `. Hard rules cannot be relaxed, so the generator gave up after ${fmtInt(MAX_ATTEMPTS_PER_ROW)} attempts.`;
+    const list = $("#diag-rules");
+    list.innerHTML = "";
+    d.rules.forEach((r) => {
+      const row = document.createElement("div");
+      row.className = `diag-row${r === main ? " main" : ""}`;
+      const boxId = HIST_RULE_BOX[r.id];
+      row.innerHTML = `<div class="diag-name"><strong>${escapeHtml(r.name)}<span class="diag-tag ${r.kind}">${r.kind === "hard" ? "HARD" : "STYLE"}</span></strong><span>${escapeHtml(r.label)}</span></div>` +
+        `<div class="diag-bar" role="img" aria-label="${escapeHtml(r.name)} rejects ${fmtPct(r.share)} of candidate rows"><i style="width:${Math.max(0.4, r.share * 100).toFixed(2)}%"></i>${r.sole > 0 ? `<i class="sole" style="left:${(r.sole * 100).toFixed(2)}%" title="rejected by this rule only: ${fmtPct(r.sole)}"></i>` : ""}</div>` +
+        `<div class="diag-val"><strong>rejects ${escapeHtml(fmtPct(r.share))}</strong><span>only this rule: ${escapeHtml(fmtPct(r.sole))}</span></div>` +
+        (boxId ? `<div class="diag-actions"><button type="button" class="btn small" data-off="${r.id}">Switch off &amp; regenerate</button><button type="button" class="btn small ghost" data-edit="${r.id}">Edit setting</button>${r.id === "historySubset" ? "<span>Tip: a smaller group size or a shorter lookback window blocks fewer rows.</span>" : ""}</div>` : "");
+      list.appendChild(row);
+    });
+    box.scrollIntoView({ block: "nearest" });
   }
 
   function showWarnings(messages, isError) {
@@ -1461,6 +1488,7 @@
   function updateStrictness() {
     const cfg = LOTTERIES[state.lotteryId];
     const { criteria, historyIndex } = buildContext(cfg);
+    state.strict = ruleStrictness(cfg, criteria, historyIndex, 4000);
     renderHistImpact(cfg, criteria);
     const space = estimateSpace(cfg, criteria, historyIndex, 30000);
     renderSpace(cfg, space);
@@ -1536,7 +1564,8 @@
   const HIST_RULE_BOX = {
     maxRun: "crit-maxrun", oddEven: "crit-oddeven", sumRange: "crit-sum", zoneSpread: "crit-zone", parityRun: "crit-parity",
     maxArithmetic: "crit-arith", sameLastDigit: "ap-lastdigit", sharedMultiple: "ap-multiple", lowHigh: "ap-lowhigh",
-    birthdayBias: "crit-birthday", reuseLast: "reuse-enabled", excludeNumbers: "crit-exclude", requireNumbers: "crit-require"
+    birthdayBias: "crit-birthday", reuseLast: "reuse-enabled", excludeNumbers: "crit-exclude", requireNumbers: "crit-require",
+    historyExact: "hist-exact", historySubset: "hist-subset", batchOverlap: "crit-overlap"
   };
   let histEls = null;
 
@@ -1570,21 +1599,38 @@
     const impact = historicalImpact(cfg, criteria, draws);
     state.histImpact = impact;
     const windowTxt = $("#hist-window").checked ? `the last ${Math.max(1, intVal("hist-window-years", 5))} year${intVal("hist-window-years", 5) === 1 ? "" : "s"}` : "all loaded draws";
+    const strict = state.strict || {};
     for (const [rule, { chip, line }] of Object.entries(els)) {
       const r = impact.rules[rule];
-      if (!r || !r.tested) {
+      const s = strict[rule];
+      if ((!r || !r.tested) && s === undefined) {
         chip.hidden = true;
         if (line) line.hidden = true;
         continue;
       }
-      const pct = `${((r.failed / r.tested) * 100).toFixed(r.failed && r.failed / r.tested < 0.1 ? 1 : 0)} %`;
+      const enabled = r ? r.enabled : !!(document.getElementById(HIST_RULE_BOX[rule]) || {}).checked;
+      const parts = [];
+      const titleParts = [];
+      const strictTxt = s === undefined ? "" : `${fmtPct(s)}`;
+      if (r && r.tested) {
+        const pct = `${((r.failed / r.tested) * 100).toFixed(r.failed && r.failed / r.tested < 0.1 ? 1 : 0)} %`;
+        parts.push(`<b>${r.failed}</b> of ${r.tested} out`);
+        titleParts.push(`${enabled ? "Filters out" : "Would filter out"} ${r.failed} of ${r.tested} past draws (${pct}) in ${windowTxt}.`);
+      }
+      if (s !== undefined) {
+        if (!parts.length) parts.push(`rejects <b>${strictTxt}</b>`);
+        titleParts.push(`On its own it rejects ${strictTxt} of all possible rows.`);
+      }
       chip.hidden = false;
-      chip.className = `hist-chip${r.enabled ? " on" : ""}`;
-      chip.innerHTML = `<b>${r.failed}</b> of ${r.tested} out`;
-      chip.title = `${r.enabled ? "Filters out" : "Would filter out"} ${r.failed} of ${r.tested} past draws (${pct}) in ${windowTxt}.`;
+      chip.className = `hist-chip${enabled ? " on" : ""}${s !== undefined && s > 0.5 && enabled ? " rej" : ""}`;
+      chip.innerHTML = parts.join(" · ");
+      chip.title = titleParts.join(" ");
       if (line) {
         line.hidden = false;
-        line.innerHTML = `In ${windowTxt} (${r.tested} past draws) this rule ${r.enabled ? "filters out" : "would filter out"} <b>${r.failed}</b> (${pct}); <b>${r.tested - r.failed}</b> would still pass.`;
+        const bits = [];
+        if (r && r.tested) bits.push(`In ${windowTxt} (${r.tested} past draws) this rule ${enabled ? "filters out" : "would filter out"} <b>${r.failed}</b> (${((r.failed / r.tested) * 100).toFixed(r.failed && r.failed / r.tested < 0.1 ? 1 : 0)} %); <b>${r.tested - r.failed}</b> would still pass.`);
+        if (s !== undefined) bits.push(`Alone it rejects <b>${strictTxt}</b> of all possible rows${s > 0.9 ? " — very strict" : s > 0.5 ? " — strict" : ""}.`);
+        line.innerHTML = bits.join(" ");
       }
     }
     const bt = $("#backtest-text");
@@ -2036,6 +2082,29 @@
     $("#history-crawl").addEventListener("click", fetchHistoryChain);
     $("#history-download").addEventListener("click", downloadDataset);
     $("#coverage-fetch").addEventListener("click", fetchHistoryChain);
+    $("#space-to-dashboard").addEventListener("click", () => setView("dashboard"));
+    $("#diag-rules").addEventListener("click", (e) => {
+      const off = e.target.closest("[data-off]");
+      const edit = e.target.closest("[data-edit]");
+      const rule = (off || edit || {}).dataset && (off ? off.dataset.off : edit.dataset.edit);
+      if (!rule) return;
+      const box = document.getElementById(HIST_RULE_BOX[rule]);
+      if (!box) return;
+      if (off) {
+        box.checked = false;
+        box.dispatchEvent(new Event("change", { bubbles: true }));
+        syncCriterionBodies();
+        updatePanelCounts();
+        generate();
+      } else {
+        const target = RULE_TARGET[rule];
+        const panel = target ? target[0] : (rule === "batchOverlap" ? "yours" : null);
+        if (panel) { const d = document.querySelector(`details[data-panel="${panel}"]`); if (d) d.open = true; }
+        const wrap = box.closest(".criterion, .reuse-control") || box;
+        wrap.scrollIntoView({ block: "center" });
+        box.focus({ preventScroll: true });
+      }
+    });
 
     // View tabs (the picker stays exactly as it was).
     $("#tab-picker").addEventListener("click", () => setView("picker"));
@@ -2104,6 +2173,8 @@
     syncHeaderHeight();
     window.addEventListener("resize", syncHeaderHeight);
 
+    const meta = document.querySelector('meta[name="build"]');
+    if (meta) $("#build-id").textContent = meta.content;
     restorePanels();
     updateGenerateLabel();
     switchLottery(state.lotteryId, true);

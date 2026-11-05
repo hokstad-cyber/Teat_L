@@ -34,7 +34,7 @@ const {
   drawsSinceLastSeen, softRuleFailures, estimatePassRate,
   isoWeekOf, isoWeekStart, isoWeeksInYear, coverageByWeek, parseNorskTippingV2, parseHeaderCsv,
   mergeDrawsByDate, windowsNewestFirst, expectedDrawsInWeek, isoDateKey, drawsExpectedBetween,
-  estimateSpace, jackpotCombinations, binomial, ruleBreakdown, ruleCatalog, historicalImpact
+  estimateSpace, jackpotCombinations, binomial, ruleBreakdown, ruleCatalog, historicalImpact, diagnoseRejections, ruleStrictness
 } = vm.runInContext(
   `({ LOTTERIES, sampleDistinct, combinationKeys, longestConsecutiveRun, sumOf, countOdd,
       overlapCount, parseDrawsText, parseDraws, filterDrawsByYears, buildHistoryIndex,
@@ -43,7 +43,7 @@ const {
       drawsSinceLastSeen, softRuleFailures, estimatePassRate,
       isoWeekOf, isoWeekStart, isoWeeksInYear, coverageByWeek, parseNorskTippingV2, parseHeaderCsv,
       mergeDrawsByDate, windowsNewestFirst, expectedDrawsInWeek, isoDateKey, drawsExpectedBetween,
-      estimateSpace, jackpotCombinations, binomial, ruleBreakdown, ruleCatalog, historicalImpact })`,
+      estimateSpace, jackpotCombinations, binomial, ruleBreakdown, ruleCatalog, historicalImpact, diagnoseRejections, ruleStrictness })`,
   context
 );
 
@@ -652,6 +652,39 @@ for (const cfg of [lotto, euro]) {
   c.reuseLast.enabled = false; c.excludeNumbers.enabled = false;
   assert(historicalImpact(lotto, c, draws).allPass === 3, "backtest: with only maxRun on, 3 of 4 pass");
   assert(historicalImpact(lotto, c, []).total === 0, "backtest: empty history");
+}
+
+/* ---- failure diagnosis & rule strictness ---- */
+{
+  // Tiny game: 3 of 5. History contains every combination except 1-3-5 → exact-row rule rejects 9 of 10.
+  const cfg = { ...lotto, mainPick: 3, mainMax: 5, defaultSumMin: 0, defaultSumMax: 999 };
+  const all = combinationKeys([1, 2, 3, 4, 5], 3).map((k) => k.split("-").map(Number)).filter((c) => c.join("-") !== "1-3-5");
+  const hx = buildHistoryIndex(all.map((mains) => ({ date: null, mains, stars: [] })), 0);
+  const crit = defaultCriteria(cfg);
+  for (const k of ["maxRun", "oddEven", "sumRange", "zoneSpread", "parityRun", "maxArithmetic", "sameLastDigit", "sharedMultiple"]) crit[k].enabled = false;
+  crit.batchOverlap.enabled = false; crit.historySubset.enabled = false; crit.historyExact.enabled = true;
+  const d = diagnoseRejections(cfg, crit, hx, [], null, 2000);
+  const ex = d.rules.find((r) => r.id === "historyExact");
+  assert(ex && ex.kind === "hard" && ex.share > 0.85 && ex.share < 0.95 && ex.sole === ex.share, `diagnose: exact-history rule rejects ~90 % and is the sole blocker (${ex && ex.share})`);
+  assert(d.passAll > 0.05 && d.passAll < 0.15, "diagnose: about 10 % of candidates pass everything (" + d.passAll + ")");
+  assert(d.rules[0].id === "historyExact", "diagnose: rules sorted by rejection share");
+  // overlap rule counts against earlier rows
+  crit.historyExact.enabled = false; crit.batchOverlap = { enabled: true, maxShared: 0 };
+  const d2 = diagnoseRejections(cfg, crit, hx, [[1, 2, 3]], null, 2000);
+  const ov = d2.rules.find((r) => r.id === "batchOverlap");
+  assert(ov && ov.kind === "hard" && ov.share > 0.85, `diagnose: overlap rule rejects rows sharing numbers with row 1 (${ov && ov.share})`);
+  // generateTickets surfaces a diagnosis when it fails
+  crit.batchOverlap.enabled = false; crit.historyExact.enabled = true;
+  const gen = generateTickets(2, cfg, crit, hx);
+  assert(gen.tickets.length === 1 && gen.diagnosis && gen.diagnosis.failedRow === 2, "generate: failure on row 2 carries a diagnosis");
+  assert(generateTickets(3, lotto, defaultCriteria(lotto), buildHistoryIndex([], 0)).diagnosis === null, "generate: no diagnosis when everything succeeds");
+
+  // Strictness of maxRun ≤ 2 on Lotto: ~15.8 % of all rows rejected
+  const st = ruleStrictness(lotto, defaultCriteria(lotto), buildHistoryIndex([], 0), 8000);
+  assert(st.maxRun > 0.12 && st.maxRun < 0.20, "strictness: maxRun ≤ 2 rejects ≈16 % (" + st.maxRun.toFixed(3) + ")");
+  assert(st.historyExact === undefined, "strictness: history rules omitted without history");
+  const h2 = buildHistoryIndex([{ date: null, mains: [1, 2, 3, 4, 5, 6, 7], stars: [] }], 0);
+  assert(ruleStrictness(lotto, defaultCriteria(lotto), h2, 500).historyExact === 0, "strictness: one past row rejects ~0 % of rows");
 }
 
 /* ---- windows ---- */

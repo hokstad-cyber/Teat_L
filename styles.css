@@ -1187,3 +1187,34 @@ details[open] > summary .chevron { transform: rotate(-135deg); margin-bottom: -0
 .rule-card.off .rc-hist b { color: var(--text-dim); }
 .criterion-body.two-col.open { flex-wrap: wrap; }
 .criterion-body.two-col .hist-line { flex: 1 1 100%; width: 100%; }
+
+
+/* ============ Failure diagnosis ============ */
+
+.diagnosis { margin-bottom: 1.2rem; padding: 1rem 1.2rem; border-radius: var(--radius); background: rgba(255, 93, 108, 0.07); border: 1px solid rgba(255, 93, 108, 0.45); }
+.diagnosis h3 { margin: 0 0 0.3rem; font-size: 1.05rem; }
+.diag-sum { margin: 0 0 0.8rem; font-size: 0.86rem; line-height: 1.5; color: var(--text-dim); }
+.diag-sum b { color: var(--text); }
+.diag-rules { display: grid; gap: 0.5rem; }
+.diag-row { display: grid; grid-template-columns: minmax(170px, 260px) 1fr auto; gap: 0.3rem 0.8rem; align-items: center; padding: 0.55rem 0.7rem; border-radius: var(--radius-sm); background: rgba(0,0,0,0.22); border: 1px solid var(--panel-edge); }
+.diag-row.main { border-color: var(--danger); }
+.diag-name strong { display: block; font-size: 0.86rem; }
+.diag-name span { font-size: 0.75rem; color: var(--text-dim); }
+.diag-tag { display: inline-block; margin-left: 0.4rem; font-size: 0.62rem; font-weight: 800; padding: 0.05rem 0.4rem; border-radius: 999px; border: 1px solid var(--panel-edge); vertical-align: middle; letter-spacing: 0.04em; }
+.diag-tag.hard { color: var(--danger); border-color: rgba(255,93,108,0.5); }
+.diag-tag.style { color: var(--gold); border-color: rgba(255,194,75,0.5); }
+.diag-bar { position: relative; height: 18px; border-radius: 6px; background: var(--bg-soft); overflow: hidden; }
+.diag-bar i { position: absolute; inset: 0 auto 0 0; background: linear-gradient(90deg, #ff8a95, var(--danger)); border-radius: 6px; min-width: 2px; }
+.diag-bar i.sole { background: #fff; opacity: 0.85; width: 3px; border-radius: 0; }
+.diag-val { text-align: right; font-size: 0.82rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.diag-val strong { display: block; }
+.diag-val span { font-size: 0.7rem; color: var(--text-dim); }
+.diag-actions { grid-column: 1 / -1; display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; font-size: 0.78rem; color: var(--text-dim); }
+.diag-foot { margin: 0.8rem 0 0; font-size: 0.74rem; line-height: 1.5; color: var(--text-dim); }
+@media (max-width: 700px) { .diag-row { grid-template-columns: 1fr; } .diag-val { text-align: left; } }
+
+.linkbtn { background: none; border: 0; padding: 0; font: inherit; font-size: 0.8rem; color: var(--accent); cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+.space-link { margin: 0.4rem 0 0; }
+.build { font-size: 0.7rem; color: var(--text-dim); margin: 0.6rem 0 0; font-variant-numeric: tabular-nums; }
+.hist-chip.rej { border-color: rgba(255,93,108,0.5); }
+.hist-chip.rej b { color: var(--danger); }
