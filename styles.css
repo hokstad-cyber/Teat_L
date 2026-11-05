@@ -1157,3 +1157,11 @@ details[open] > summary .chevron { transform: rotate(-135deg); margin-bottom: -0
   .kpi strong { font-size: 1.55rem; }
 }
 @media print { .view-tabs, .dash-head .btn-row { display: none !important; } }
+
+.proof-boost { grid-column: 1 / -1; display: flex; align-items: center; gap: 1rem; padding: 1rem 1.2rem; border-radius: var(--radius-sm); background: linear-gradient(135deg, var(--accent-soft), transparent 80%), rgba(0,0,0,0.22); border: 1px solid var(--accent); }
+.boost-num { font-size: 2.6rem; font-weight: 800; color: var(--accent); letter-spacing: -0.03em; line-height: 1; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.boost-text { font-size: 0.9rem; line-height: 1.5; color: var(--text-dim); }
+.boost-text strong { color: var(--text); }
+.boost-text span { display: block; margin-top: 0.2rem; font-size: 0.82rem; }
+.boost-text b { color: var(--gold); }
+@media (max-width: 640px) { .proof-boost { flex-direction: column; align-items: flex-start; } }

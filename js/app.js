@@ -1525,8 +1525,8 @@
     const pct = fmtPct(space.share);
     $("#space-note").innerHTML = space.count === space.total
       ? `Every row has the same <strong>1 in ${oneIn}</strong> chance of being the winning row. Add rules above to see how much they narrow the field.`
-      : `Rules narrow which rows you play — they do <strong>not</strong> improve your chances. Each row you play still has exactly <strong>1 in ${oneIn}</strong>. ` +
-        `A random draw fits your rules only about <strong>${pct}</strong> of the time, and when it doesn't, none of your rows can win.`;
+      : `<strong>If the draw lands inside your pool</strong>, each row's chance is about <strong>1 in ${fmtInt(space.exact ? space.count : sig3(space.count))}</strong> instead of 1 in ${oneIn} — <strong>${boostText(space.share)} better</strong>. ` +
+        `But it lands inside only <strong>${pct}</strong> of the time, so your overall odds are unchanged. See the Dashboard for the full comparison.`;
   }
 
   /* ---------- dashboard view ---------- */
@@ -1571,6 +1571,12 @@
     return `<svg viewBox="0 0 120 120" aria-hidden="true"><defs><linearGradient id="ringGrad" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="var(--fill-a)"/><stop offset="100%" stop-color="var(--fill-b)"/></linearGradient></defs>` +
       `<circle class="ring-track" cx="60" cy="60" r="52"/><circle class="ring-fill" cx="60" cy="60" r="52" stroke-dasharray="${len.toFixed(1)} ${C.toFixed(1)}"/>` +
       `<text class="ring-pct" x="60" y="62">${escapeHtml(fmtPct(share).replace(" %", "%"))}</text><text class="ring-sub" x="60" y="76">of all rows fit</text></svg>`;
+  }
+
+  /** "×2.6" style multiplier for how much better a row is if the draw fits the rules. */
+  function boostText(share) {
+    const m = 1 / share;
+    return `×${m >= 10 ? Math.round(m) : m.toFixed(1)}`;
   }
 
   function oneInText(total, n) {
@@ -1661,11 +1667,14 @@
     const cond = oneInText(fit, rows);
     const overall = oneInText(total, rows);
     const coverCost = fit * price;
-    $("#proof").innerHTML =
+    const boost = share < 0.9995
+      ? `<div class="proof-boost"><div class="boost-num">${escapeHtml(boostText(share))}</div><div class="boost-text"><strong>If the draw lands inside your pool</strong>, each row's chance is <strong>1 in ${escapeHtml(cnt(fit))}</strong> instead of 1 in ${escapeHtml(fmtInt(total))} — ${escapeHtml(boostText(share))} better.<span>The condition: it lands inside only <b>${escapeHtml(fmtPct(share))}</b> of the time.</span></div></div>`
+      : "";
+    $("#proof").innerHTML = boost +
       `<div class="proof-col"><h4>Without rules</h4><div class="proof-eq">${rows} row${rows === 1 ? "" : "s"} ÷ <b>${fmtInt(total)}</b> possible rows</div><div class="proof-res">${escapeHtml(without)}</div></div>` +
       `<div class="proof-col"><h4>With your rules</h4><div class="proof-eq">Chance the draw fits your rules: <b>${escapeHtml(fmtPct(share))}</b><br>If it does, ${rows} row${rows === 1 ? "" : "s"} ÷ <b>${escapeHtml(cnt(fit))}</b> fitting rows: <b>${escapeHtml(cond)}</b></div><div class="proof-res">${escapeHtml(fmtPct(share))} × ${escapeHtml(cond)} = ${escapeHtml(overall)}</div></div>` +
       `<div class="proof-eqsign">= the same overall chance</div>` +
-      `<div class="proof-note"><strong>Why rules don't raise your chances.</strong> They shrink the pool, so <em>if</em> the draw lands inside it each row is worth more — but the draw lands inside only ${escapeHtml(fmtPct(share))} of the time, and the two effects cancel exactly. ` +
+      `<div class="proof-note"><strong>Both statements are true.</strong> <em>Given</em> that the draw lands inside your pool, your odds are ${escapeHtml(boostText(share))} better. But you place your bet before the draw, and it only lands inside ${escapeHtml(fmtPct(share))} of the time — so across all draws the higher chance and the lower probability of qualifying cancel exactly. ` +
       (share < 0.9995 ? `To cover every fitting row you would need about ${escapeHtml(cnt(fit))} rows (≈ ${kr(coverCost)} kr) and would still win only ${escapeHtml(fmtPct(share))} of the time.` : `With no rules every row is equally likely.`) + `</div>`;
 
     renderDashRules(bd, criteria);
