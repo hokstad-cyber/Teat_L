@@ -57,6 +57,7 @@
           </div>
           <div class="strictness-track" aria-hidden="true"><div class="strictness-fill" id="strictness-fill"></div></div>
           <p class="mini-hint" id="strictness-text" aria-live="polite"></p>
+          <p class="backtest" id="backtest-text" aria-live="polite"></p>
         </div>
 
         <div class="btn-row">
@@ -637,7 +638,8 @@
 
     <section class="dash-card" aria-labelledby="rules-title">
       <h3 id="rules-title">All settings at a glance</h3>
-      <p class="dash-hint">Every rule with its current setting, and how much of the field it keeps on its own. Click a card to change it in the picker.</p>
+      <p class="dash-hint">Every rule with its current setting, how much of the field it keeps on its own, and how many of your loaded past draws it would have filtered out. Click a card to change it in the picker.</p>
+      <p class="dash-backtest" id="dash-backtest"></p>
       <div id="dash-rules" class="rule-grid"></div>
     </section>
 

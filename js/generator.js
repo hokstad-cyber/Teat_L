@@ -541,3 +541,65 @@ function ruleBreakdown(cfg, criteria, historyIndex, samples) {
     finalRate, count, share: total ? count / total : 1
   };
 }
+
+/* ======================= Backtest against past draws ======================= */
+
+/**
+ * How would each rule have treated the past draws in `draws`?
+ * For every rule (whether switched on or not, so the user can preview it):
+ *   tested  draws the rule could be evaluated on
+ *   failed  draws the rule would have filtered out
+ * Reuse-from-last-draw is judged against each draw's predecessor. The
+ * history-exclusion rules are not listed: they remove past results by design.
+ * `allPass` counts draws that satisfy every rule that is currently switched on.
+ * Returns { total, rules: { id: { tested, failed, enabled } }, allPass, evaluated }.
+ */
+function historicalImpact(cfg, criteria, draws) {
+  const sorted = draws.slice().sort((a, b) => (a.date ? a.date.getTime() : -Infinity) - (b.date ? b.date.getTime() : -Infinity));
+  const only = {};
+  for (const k of SOFT_RULE_KEYS) only[k] = criteriaOnly(criteria, k);
+  const exc = criteria.excludeNumbers.numbers || [];
+  const req = criteria.requireNumbers.numbers || [];
+  const reuse = criteria.reuseLast;
+  const rules = {};
+  const add = (id, enabled) => (rules[id] = { tested: 0, failed: 0, enabled: !!enabled });
+  for (const k of SOFT_RULE_KEYS) add(k, criteria[k].enabled);
+  add("reuseLast", reuse && reuse.enabled);
+  if (exc.length) add("excludeNumbers", criteria.excludeNumbers.enabled);
+  if (req.length) add("requireNumbers", criteria.requireNumbers.enabled);
+
+  let allPass = 0;
+  let evaluated = 0;
+  sorted.forEach((d, i) => {
+    const mains = d.mains;
+    evaluated++;
+    let passAll = true;
+    for (const k of SOFT_RULE_KEYS) {
+      const fail = softRuleFailures(mains, cfg, only[k], true).length > 0;
+      rules[k].tested++;
+      if (fail) rules[k].failed++;
+      if (fail && rules[k].enabled) passAll = false;
+    }
+    if (i > 0) {
+      const shared = overlapCount(sorted[i - 1].mains, mains);
+      const fail = shared < reuse.min || shared > reuse.max;
+      rules.reuseLast.tested++;
+      if (fail) rules.reuseLast.failed++;
+      if (fail && rules.reuseLast.enabled) passAll = false;
+    }
+    if (rules.excludeNumbers) {
+      const fail = mains.some((n) => exc.includes(n));
+      rules.excludeNumbers.tested++;
+      if (fail) rules.excludeNumbers.failed++;
+      if (fail && rules.excludeNumbers.enabled) passAll = false;
+    }
+    if (rules.requireNumbers) {
+      const fail = !req.every((n) => mains.includes(n));
+      rules.requireNumbers.tested++;
+      if (fail) rules.requireNumbers.failed++;
+      if (fail && rules.requireNumbers.enabled) passAll = false;
+    }
+    if (passAll) allPass++;
+  });
+  return { total: sorted.length, rules, allPass, evaluated };
+}

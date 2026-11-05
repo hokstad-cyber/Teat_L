@@ -1439,7 +1439,7 @@
   let strictTimer = null;
   function scheduleStrictness() {
     clearTimeout(strictTimer);
-    strictTimer = setTimeout(updateStrictness, 250);
+    strictTimer = setTimeout(updateStrictness, 120);
   }
 
   const fmtInt = (n) => Math.round(n).toLocaleString("en-GB");
@@ -1461,6 +1461,7 @@
   function updateStrictness() {
     const cfg = LOTTERIES[state.lotteryId];
     const { criteria, historyIndex } = buildContext(cfg);
+    renderHistImpact(cfg, criteria);
     const space = estimateSpace(cfg, criteria, historyIndex, 30000);
     renderSpace(cfg, space);
 
@@ -1529,6 +1530,72 @@
         `But it lands inside only <strong>${pct}</strong> of the time, so your overall odds are unchanged. See the Dashboard for the full comparison.`;
   }
 
+  /* ---------- backtest against past draws (live) ---------- */
+
+  // rule id -> checkbox that switches it on/off
+  const HIST_RULE_BOX = {
+    maxRun: "crit-maxrun", oddEven: "crit-oddeven", sumRange: "crit-sum", zoneSpread: "crit-zone", parityRun: "crit-parity",
+    maxArithmetic: "crit-arith", sameLastDigit: "ap-lastdigit", sharedMultiple: "ap-multiple", lowHigh: "ap-lowhigh",
+    birthdayBias: "crit-birthday", reuseLast: "reuse-enabled", excludeNumbers: "crit-exclude", requireNumbers: "crit-require"
+  };
+  let histEls = null;
+
+  function ensureHistElements() {
+    if (histEls) return histEls;
+    histEls = {};
+    for (const [rule, boxId] of Object.entries(HIST_RULE_BOX)) {
+      const box = document.getElementById(boxId);
+      const label = box && box.closest("label.toggle");
+      if (!label) continue;
+      const chip = document.createElement("span");
+      chip.className = "hist-chip";
+      chip.hidden = true;
+      label.appendChild(chip);
+      let line = null;
+      const body = document.querySelector(`.criterion-body[data-for="${boxId}"]`);
+      if (body) {
+        line = document.createElement("p");
+        line.className = "hist-line";
+        line.hidden = true;
+        body.insertBefore(line, body.firstChild);
+      }
+      histEls[rule] = { chip, line };
+    }
+    return histEls;
+  }
+
+  function renderHistImpact(cfg, criteria) {
+    const draws = activeDraws();
+    const els = ensureHistElements();
+    const impact = historicalImpact(cfg, criteria, draws);
+    state.histImpact = impact;
+    const windowTxt = $("#hist-window").checked ? `the last ${Math.max(1, intVal("hist-window-years", 5))} year${intVal("hist-window-years", 5) === 1 ? "" : "s"}` : "all loaded draws";
+    for (const [rule, { chip, line }] of Object.entries(els)) {
+      const r = impact.rules[rule];
+      if (!r || !r.tested) {
+        chip.hidden = true;
+        if (line) line.hidden = true;
+        continue;
+      }
+      const pct = `${((r.failed / r.tested) * 100).toFixed(r.failed && r.failed / r.tested < 0.1 ? 1 : 0)} %`;
+      chip.hidden = false;
+      chip.className = `hist-chip${r.enabled ? " on" : ""}`;
+      chip.innerHTML = `<b>${r.failed}</b> of ${r.tested} out`;
+      chip.title = `${r.enabled ? "Filters out" : "Would filter out"} ${r.failed} of ${r.tested} past draws (${pct}) in ${windowTxt}.`;
+      if (line) {
+        line.hidden = false;
+        line.innerHTML = `In ${windowTxt} (${r.tested} past draws) this rule ${r.enabled ? "filters out" : "would filter out"} <b>${r.failed}</b> (${pct}); <b>${r.tested - r.failed}</b> would still pass.`;
+      }
+    }
+    const bt = $("#backtest-text");
+    if (!impact.total) {
+      bt.textContent = "Load results to see how your rules would have treated past draws.";
+    } else {
+      const share = impact.allPass / impact.total;
+      bt.innerHTML = `Past draws: <b>${impact.allPass} of ${impact.total}</b> (${(share * 100).toFixed(share < 0.1 ? 1 : 0)} %) would have passed every rule you have on.`;
+    }
+  }
+
   /* ---------- dashboard view ---------- */
 
   const RULE_TARGET = {
@@ -1594,6 +1661,7 @@
     setTimeout(() => {
       if (token !== dashToken) return;
       const { criteria, historyIndex } = buildContext(cfg);
+      renderHistImpact(cfg, criteria);
       const bd = ruleBreakdown(cfg, criteria, historyIndex, 40000);
       if (token !== dashToken) return;
       drawDashboard(cfg, criteria, historyIndex, bd);
@@ -1678,8 +1746,18 @@
       (share < 0.9995 ? `To cover every fitting row you would need about ${escapeHtml(cnt(fit))} rows (≈ ${kr(coverCost)} kr) and would still win only ${escapeHtml(fmtPct(share))} of the time.` : `With no rules every row is equally likely.`) + `</div>`;
 
     renderDashRules(bd, criteria);
+    renderDashBacktest(bd);
     renderBoard(cfg, criteria);
     renderDashData(cfg, criteria, historyIndex);
+  }
+
+  function renderDashBacktest(bd) {
+    const el = $("#dash-backtest");
+    const imp = state.histImpact;
+    if (!imp || !imp.total) { el.innerHTML = ""; return; }
+    const pastShare = imp.allPass / imp.total;
+    el.innerHTML = `<b>Backtest:</b> ${imp.allPass} of your ${imp.total} loaded past draws (${fmtPct(pastShare)}) would have passed every rule you have on` +
+      (bd && bd.feasible ? `, compared with ${fmtPct(bd.share)} of all possible rows. If the two are close, your rules treat real draws like random rows; a much lower past share means the rules clash with how draws actually fall.` : ".");
   }
 
   function renderDashRules(bd, criteria) {
@@ -1692,9 +1770,11 @@
       card.type = "button";
       card.className = `rule-card ${r.enabled ? "on" : "off"}`;
       card.dataset.rule = r.id;
+      const hi = state.histImpact && state.histImpact.rules[r.id];
+      const histLine = hi && hi.tested ? `<div class="rc-hist">${r.enabled ? "Filters out" : "Would filter out"} <b>${hi.failed}</b> of ${hi.tested} past draws</div>` : "";
       const keep = r.enabled && s ? `<div class="rc-keep">Alone keeps <b>${escapeHtml(fmtPct(s.solo))}</b></div><div class="rc-bar"><i style="width:${(s.solo * 100).toFixed(1)}%"></i></div>` : "";
       card.innerHTML = `<div class="rc-top"><span class="rc-group">${escapeHtml(r.group)}</span><span class="rc-chip">${r.enabled ? "ON" : "OFF"}</span></div>` +
-        `<div class="rc-name">${escapeHtml(r.name)}</div><div class="rc-label">${escapeHtml(r.label)}</div>${keep}`;
+        `<div class="rc-name">${escapeHtml(r.name)}</div><div class="rc-label">${escapeHtml(r.label)}</div>${keep}${histLine}`;
       grid.appendChild(card);
     }
   }

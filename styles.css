@@ -1165,3 +1165,25 @@ details[open] > summary .chevron { transform: rotate(-135deg); margin-bottom: -0
 .boost-text span { display: block; margin-top: 0.2rem; font-size: 0.82rem; }
 .boost-text b { color: var(--gold); }
 @media (max-width: 640px) { .proof-boost { flex-direction: column; align-items: flex-start; } }
+
+
+/* ============ Backtest against past draws ============ */
+
+.hist-chip { margin-left: auto; flex: none; font-size: 0.68rem; font-weight: 700; padding: 0.12rem 0.5rem; border-radius: 999px; background: rgba(255,255,255,0.06); border: 1px solid var(--panel-edge); color: var(--text-dim); white-space: nowrap; font-variant-numeric: tabular-nums; cursor: help; }
+.hist-chip b { color: var(--text); }
+.hist-chip.on { border-color: rgba(255, 194, 75, 0.55); }
+.hist-chip.on b { color: var(--gold); }
+.hist-chip[hidden] { display: none; }
+.hist-line { margin: 0 0 0.55rem; padding: 0.4rem 0.6rem; border-radius: 8px; background: rgba(255, 194, 75, 0.08); border-left: 3px solid var(--gold); font-size: 0.76rem; line-height: 1.45; color: var(--text-dim); }
+.hist-line b { color: var(--text); }
+.hist-line[hidden] { display: none; }
+.backtest { margin: 0.5rem 0 0; font-size: 0.78rem; line-height: 1.45; color: var(--text-dim); border-top: 1px solid var(--panel-edge); padding-top: 0.5rem; }
+.backtest b { color: var(--text); }
+.dash-backtest { margin: -0.3rem 0 0.9rem; padding: 0.6rem 0.9rem; border-radius: var(--radius-sm); background: rgba(255,194,75,0.07); border: 1px solid rgba(255,194,75,0.3); font-size: 0.84rem; line-height: 1.5; color: var(--text-dim); }
+.dash-backtest b { color: var(--text); }
+.dash-backtest:empty { display: none; }
+.rc-hist { font-size: 0.78rem; color: var(--text-dim); }
+.rc-hist b { color: var(--gold); font-variant-numeric: tabular-nums; }
+.rule-card.off .rc-hist b { color: var(--text-dim); }
+.criterion-body.two-col.open { flex-wrap: wrap; }
+.criterion-body.two-col .hist-line { flex: 1 1 100%; width: 100%; }

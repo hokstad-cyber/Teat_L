@@ -34,7 +34,7 @@ const {
   drawsSinceLastSeen, softRuleFailures, estimatePassRate,
   isoWeekOf, isoWeekStart, isoWeeksInYear, coverageByWeek, parseNorskTippingV2, parseHeaderCsv,
   mergeDrawsByDate, windowsNewestFirst, expectedDrawsInWeek, isoDateKey, drawsExpectedBetween,
-  estimateSpace, jackpotCombinations, binomial, ruleBreakdown, ruleCatalog
+  estimateSpace, jackpotCombinations, binomial, ruleBreakdown, ruleCatalog, historicalImpact
 } = vm.runInContext(
   `({ LOTTERIES, sampleDistinct, combinationKeys, longestConsecutiveRun, sumOf, countOdd,
       overlapCount, parseDrawsText, parseDraws, filterDrawsByYears, buildHistoryIndex,
@@ -43,7 +43,7 @@ const {
       drawsSinceLastSeen, softRuleFailures, estimatePassRate,
       isoWeekOf, isoWeekStart, isoWeeksInYear, coverageByWeek, parseNorskTippingV2, parseHeaderCsv,
       mergeDrawsByDate, windowsNewestFirst, expectedDrawsInWeek, isoDateKey, drawsExpectedBetween,
-      estimateSpace, jackpotCombinations, binomial, ruleBreakdown, ruleCatalog })`,
+      estimateSpace, jackpotCombinations, binomial, ruleBreakdown, ruleCatalog, historicalImpact })`,
   context
 );
 
@@ -625,6 +625,33 @@ for (const cfg of [lotto, euro]) {
   none.historyExact.enabled = false; none.historySubset.enabled = false;
   const nb = ruleBreakdown(lotto, none, hx);
   assert(nb.steps.length === 0 && nb.share === 1 && nb.count === 5379616, "breakdown: no rules → full space");
+}
+
+/* ---- backtest against past draws ---- */
+{
+  const mk = (iso, mains) => ({ date: new Date(iso), mains, stars: [], source: "x" });
+  const draws = [
+    mk("2024-01-06", [1, 2, 3, 10, 20, 25, 30]),   // run of 3 → breaks maxRun 2
+    mk("2024-01-13", [4, 9, 14, 19, 24, 29, 33]),  // fine; shares 0 with previous
+    mk("2024-01-20", [4, 9, 15, 21, 26, 31, 34]),  // shares 2 with previous
+    mk("2024-01-27", [5, 8, 12, 17, 22, 27, 32])   // shares 0
+  ];
+  const c = defaultCriteria(lotto);
+  for (const k of ["oddEven", "sumRange", "zoneSpread", "parityRun", "maxArithmetic", "sameLastDigit", "sharedMultiple"]) c[k].enabled = false;
+  c.maxRun = { enabled: true, value: 2 };
+  c.excludeNumbers = { enabled: true, numbers: [34] };
+  c.requireNumbers = { enabled: false, numbers: [4] };
+  c.reuseLast = { enabled: true, min: 1, max: 3, numbers: [] };
+  const r = historicalImpact(lotto, c, draws);
+  assert(r.total === 4 && r.rules.maxRun.tested === 4 && r.rules.maxRun.failed === 1, "backtest: maxRun filters exactly the draw with 3 in a row");
+  assert(r.rules.excludeNumbers.failed === 1 && r.rules.excludeNumbers.enabled, "backtest: excluded number 34 appeared once");
+  assert(r.rules.requireNumbers.failed === 2 && !r.rules.requireNumbers.enabled, "backtest: disabled rule still previewed (requiring 4 fails 2 draws)");
+  assert(r.rules.reuseLast.tested === 3 && r.rules.reuseLast.failed === 2, "backtest: reuse judged against the previous draw (" + r.rules.reuseLast.failed + " of 3 outside 1–3)");
+  // draw1 fails maxRun; draw2 fails reuse(0); draw3 fails exclude(34); draw4 fails reuse(0) → none pass
+  assert(r.allPass === 0, "backtest: allPass counts draws passing every enabled rule (" + r.allPass + ")");
+  c.reuseLast.enabled = false; c.excludeNumbers.enabled = false;
+  assert(historicalImpact(lotto, c, draws).allPass === 3, "backtest: with only maxRun on, 3 of 4 pass");
+  assert(historicalImpact(lotto, c, []).total === 0, "backtest: empty history");
 }
 
 /* ---- windows ---- */
