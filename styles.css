@@ -1300,3 +1300,19 @@ details[open] > summary .chevron { transform: rotate(-135deg); margin-bottom: -0
 .preset-notes li { margin: 0.1rem 0; }
 .preset-notes .pn-head { list-style: none; margin-left: -1rem; color: var(--text); font-weight: 700; }
 .preset-notes .pn-foot { list-style: none; margin-left: -1rem; margin-top: 0.4rem; font-style: italic; }
+
+
+/* ============ Excluded zones ============ */
+
+.zone-head { display: flex; justify-content: space-between; align-items: center; gap: 0.6rem; font-size: 0.8rem; color: var(--text-dim); margin-bottom: 0.4rem; }
+.zone-count { font-weight: 800; color: var(--text); font-variant-numeric: tabular-nums; }
+.zone-chips { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.zone-pill { position: relative; cursor: pointer; }
+.zone-pill input { position: absolute; opacity: 0; pointer-events: none; }
+.zone-pill span { display: inline-block; min-width: 4.2rem; text-align: center; padding: 0.45rem 0.7rem; border-radius: 999px; border: 1px solid var(--panel-edge); background: rgba(255,255,255,0.05); font-weight: 700; font-size: 0.82rem; color: var(--text); font-variant-numeric: tabular-nums; transition: all 0.15s ease; }
+.zone-pill:hover span { border-color: var(--accent); }
+.zone-pill input:checked + span { background: var(--danger); border-color: var(--danger); color: #fff; text-decoration: line-through; }
+.zone-pill input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
+.zone-pill input:disabled + span { opacity: 0.4; cursor: not-allowed; }
+.zone-count { white-space: nowrap; flex: none; }
+.zone-head span:first-child { flex: 1; }

@@ -14,6 +14,7 @@
  *   lowHigh:       { enabled, minLow, minHigh } // balance low vs high half
  *   birthdayBias:  { enabled }          // require at least one number > 31
  *   excludeNumbers:{ enabled, numbers: number[] }
+ *   excludeZones:  { enabled, zones: number[] }  // zone indexes (0 = 1–10), at most 3
  *   requireNumbers:{ enabled, numbers: number[] }
  *   batchOverlap:  { enabled, maxShared }  // vs already generated rows
  *   historyExact:  { enabled }
@@ -25,9 +26,22 @@
 
 const MAX_ATTEMPTS_PER_ROW = 8000;
 
+/** Numbers removed from the pool: the "never pick" list plus every number in an excluded zone. */
+function excludedNumberSet(cfg, criteria) {
+  const s = new Set(criteria.excludeNumbers.enabled ? criteria.excludeNumbers.numbers : []);
+  const ez = criteria.excludeZones;
+  if (ez && ez.enabled) {
+    for (const z of ez.zones || []) {
+      for (let n = z * cfg.zoneSize + 1; n <= Math.min(cfg.mainMax, (z + 1) * cfg.zoneSize); n++) s.add(n);
+    }
+  }
+  return s;
+}
+
 function validateCriteriaFeasibility(cfg, criteria) {
   const problems = [];
-  const excluded = criteria.excludeNumbers.enabled ? criteria.excludeNumbers.numbers : [];
+  const excludedSet = excludedNumberSet(cfg, criteria);
+  const excluded = [...excludedSet];
   const required = criteria.requireNumbers.enabled ? criteria.requireNumbers.numbers : [];
   const poolSize = cfg.mainMax - new Set(excluded).size;
   if (poolSize < cfg.mainPick) {
@@ -102,6 +116,36 @@ function validateCriteriaFeasibility(cfg, criteria) {
       }
       if (r.min > availFromLast) {
         problems.push(`Reuse from last draw: only ${availFromLast} of the last draw's numbers are available (after exclusions), fewer than the minimum of ${r.min}.`);
+      }
+    }
+  }
+  const ez = criteria.excludeZones && criteria.excludeZones.enabled ? criteria.excludeZones.zones : [];
+  if (ez.length) {
+    const zoneCount = lotteryZoneCount(cfg);
+    const zoneLabel = (z) => `${z * cfg.zoneSize + 1}–${Math.min(cfg.mainMax, (z + 1) * cfg.zoneSize)}`;
+    if (ez.length > 3) problems.push("Excluded zones: you can exclude at most 3 zones.");
+    if (criteria.zoneSpread.enabled && (criteria.zoneSpread.minPerZone || 0) > 0) {
+      problems.push(`Excluded zones: "Spread across zones" requires at least ${criteria.zoneSpread.minPerZone} number(s) in every zone, but zone ${zoneLabel(ez[0])} is excluded.`);
+    }
+    const inZone = required.filter((n) => excludedSet.has(n) && ez.includes(zoneOfNumber(cfg, n)));
+    if (inZone.length) problems.push(`Excluded zones: required number(s) ${inZone.join(", ")} lie in an excluded zone.`);
+    if (criteria.birthdayBias.enabled) {
+      let any = false;
+      for (let n = 32; n <= cfg.mainMax; n++) if (!excludedSet.has(n)) any = true;
+      if (!any) problems.push("Excluded zones: no number above 31 is left for the birthday-bias rule.");
+    }
+    if (criteria.lowHigh && criteria.lowHigh.enabled) {
+      const half = Math.ceil(cfg.mainMax / 2);
+      let lowAvail = 0;
+      let highAvail = 0;
+      for (let n = 1; n <= cfg.mainMax; n++) if (!excludedSet.has(n)) (n <= half ? lowAvail++ : highAvail++);
+      if (criteria.lowHigh.minLow > lowAvail) problems.push(`Excluded zones: only ${lowAvail} lower-half number(s) are left, fewer than the ${criteria.lowHigh.minLow} required.`);
+      if (criteria.lowHigh.minHigh > highAvail) problems.push(`Excluded zones: only ${highAvail} higher-half number(s) are left, fewer than the ${criteria.lowHigh.minHigh} required.`);
+    }
+    if (criteria.zoneSpread.enabled) {
+      const remaining = zoneCount - new Set(ez).size;
+      if (remaining * criteria.zoneSpread.maxPerZone < cfg.mainPick) {
+        problems.push(`Excluded zones: with ${remaining} zone(s) left and at most ${criteria.zoneSpread.maxPerZone} per zone, ${cfg.mainPick} numbers do not fit.`);
       }
     }
   }
@@ -230,7 +274,7 @@ function chooseReuseCount(reuseLast, required, lastPoolSize, otherPoolSize, need
  * infeasible.
  */
 function makeRowSampler(cfg, criteria, weights) {
-  const excluded = new Set(criteria.excludeNumbers.enabled ? criteria.excludeNumbers.numbers : []);
+  const excluded = excludedNumberSet(cfg, criteria);
   const required = criteria.requireNumbers.enabled ? criteria.requireNumbers.numbers.slice() : [];
   const pool = [];
   for (let n = 1; n <= cfg.mainMax; n++) {
@@ -394,7 +438,7 @@ function estimateSpace(cfg, criteria, historyIndex, samples) {
   const total = jackpotCombinations(cfg);
   if (problems.length) return { feasible: false, problems, total, count: 0, share: 0, lo: 0, hi: 0, exact: true };
 
-  const excluded = new Set(criteria.excludeNumbers.enabled ? criteria.excludeNumbers.numbers : []);
+  const excluded = excludedNumberSet(cfg, criteria);
   const required = criteria.requireNumbers.enabled ? criteria.requireNumbers.numbers.slice() : [];
   const pool = [];
   for (let n = 1; n <= cfg.mainMax; n++) if (!excluded.has(n) && !required.includes(n)) pool.push(n);
@@ -489,7 +533,7 @@ function ruleBreakdown(cfg, criteria, historyIndex, samples) {
   const catalog = ruleCatalog(cfg, criteria, historyIndex);
   if (problems.length) return { feasible: false, problems, total, catalog, steps: [] };
 
-  const excluded = new Set(criteria.excludeNumbers.enabled ? criteria.excludeNumbers.numbers : []);
+  const excluded = excludedNumberSet(cfg, criteria);
   const required = criteria.requireNumbers.enabled ? criteria.requireNumbers.numbers.slice() : [];
   const pool = [];
   for (let n = 1; n <= cfg.mainMax; n++) if (!excluded.has(n) && !required.includes(n)) pool.push(n);
@@ -569,6 +613,10 @@ function historicalImpact(cfg, criteria, draws) {
   for (const k of SOFT_RULE_KEYS) add(k, criteria[k].enabled);
   add("reuseLast", reuse && reuse.enabled);
   if (exc.length) add("excludeNumbers", criteria.excludeNumbers.enabled);
+  const zoneNums = new Set();
+  const ezs = criteria.excludeZones && criteria.excludeZones.zones ? criteria.excludeZones.zones : [];
+  for (const z of ezs) for (let n = z * cfg.zoneSize + 1; n <= Math.min(cfg.mainMax, (z + 1) * cfg.zoneSize); n++) zoneNums.add(n);
+  if (zoneNums.size) add("excludeZones", criteria.excludeZones.enabled);
   if (req.length) add("requireNumbers", criteria.requireNumbers.enabled);
 
   let allPass = 0;
@@ -595,6 +643,12 @@ function historicalImpact(cfg, criteria, draws) {
       rules.excludeNumbers.tested++;
       if (fail) rules.excludeNumbers.failed++;
       if (fail && rules.excludeNumbers.enabled) passAll = false;
+    }
+    if (rules.excludeZones) {
+      const fail = mains.some((n) => zoneNums.has(n));
+      rules.excludeZones.tested++;
+      if (fail) rules.excludeZones.failed++;
+      if (fail && rules.excludeZones.enabled) passAll = false;
     }
     if (rules.requireNumbers) {
       const fail = !req.every((n) => mains.includes(n));

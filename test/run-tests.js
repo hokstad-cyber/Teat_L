@@ -34,7 +34,7 @@ const {
   drawsSinceLastSeen, softRuleFailures, estimatePassRate,
   isoWeekOf, isoWeekStart, isoWeeksInYear, coverageByWeek, parseNorskTippingV2, parseHeaderCsv,
   mergeDrawsByDate, windowsNewestFirst, expectedDrawsInWeek, isoDateKey, drawsExpectedBetween,
-  estimateSpace, jackpotCombinations, binomial, ruleBreakdown, ruleCatalog, historicalImpact, diagnoseRejections, ruleStrictness, overlapAcceptance, halfWeights, expectedLowCount, deriveBestGuess, smallestCovering
+  estimateSpace, jackpotCombinations, binomial, ruleBreakdown, ruleCatalog, historicalImpact, diagnoseRejections, ruleStrictness, overlapAcceptance, halfWeights, expectedLowCount, deriveBestGuess, smallestCovering, excludedNumberSet
 } = vm.runInContext(
   `({ LOTTERIES, sampleDistinct, combinationKeys, longestConsecutiveRun, sumOf, countOdd,
       overlapCount, parseDrawsText, parseDraws, filterDrawsByYears, buildHistoryIndex,
@@ -43,7 +43,7 @@ const {
       drawsSinceLastSeen, softRuleFailures, estimatePassRate,
       isoWeekOf, isoWeekStart, isoWeeksInYear, coverageByWeek, parseNorskTippingV2, parseHeaderCsv,
       mergeDrawsByDate, windowsNewestFirst, expectedDrawsInWeek, isoDateKey, drawsExpectedBetween,
-      estimateSpace, jackpotCombinations, binomial, ruleBreakdown, ruleCatalog, historicalImpact, diagnoseRejections, ruleStrictness, overlapAcceptance, halfWeights, expectedLowCount, deriveBestGuess, smallestCovering })`,
+      estimateSpace, jackpotCombinations, binomial, ruleBreakdown, ruleCatalog, historicalImpact, diagnoseRejections, ruleStrictness, overlapAcceptance, halfWeights, expectedLowCount, deriveBestGuess, smallestCovering, excludedNumberSet })`,
   context
 );
 
@@ -742,6 +742,43 @@ for (const cfg of [lotto, euro]) {
   }
   const gh = deriveBestGuess(lotto, highDraws, 0.95);
   assert(gh.settings["bias-half"] === true && gh.settings["bias-half-value"] > 0, "bestGuess: draws leaning high → positive slider (" + gh.settings["bias-half-value"] + ")");
+}
+
+/* ---- excluded zones ---- */
+{
+  const hx = buildHistoryIndex([], 0);
+  const base = () => { const c = defaultCriteria(lotto); for (const k of ["maxRun", "oddEven", "sumRange", "zoneSpread", "parityRun", "maxArithmetic", "sameLastDigit", "sharedMultiple"]) c[k].enabled = false; c.batchOverlap.enabled = false; c.historyExact.enabled = false; c.historySubset.enabled = false; return c; };
+  const c = base();
+  c.excludeZones = { enabled: true, zones: [2] };               // 21–30
+  const set = excludedNumberSet(lotto, c);
+  assert(set.size === 10 && set.has(21) && set.has(30) && !set.has(31), "zones: zone 3 removes 21–30");
+  const r = estimateSpace(lotto, c, hx);
+  assert(r.exact && r.count === binomial(24, 7), "zones: one zone excluded → exactly C(24,7) rows (" + r.count + ")");
+  c.excludeZones = { enabled: true, zones: [0, 1] };
+  assert(estimateSpace(lotto, c, hx).count === binomial(14, 7), "zones: two zones excluded → C(14,7)");
+  c.excludeZones = { enabled: true, zones: [0, 1, 2] };
+  assert(!estimateSpace(lotto, c, hx).feasible, "zones: three of four Lotto zones leave only 4 numbers → conflict");
+  c.excludeNumbers = { enabled: true, numbers: [1] }; c.excludeZones = { enabled: true, zones: [0] };
+  assert(excludedNumberSet(lotto, c).size === 10, "zones: overlaps with the never-pick list are merged");
+  // rows never contain an excluded zone
+  const g = base(); g.excludeZones = { enabled: true, zones: [0, 3] };
+  const rows = generateTickets(10, lotto, g, hx).tickets;
+  assert(rows.length === 10 && rows.every((t) => t.mains.every((n) => n >= 11 && n <= 30)), "zones: generated rows avoid the excluded zones");
+  // conflicts
+  const rq = base(); rq.excludeZones = { enabled: true, zones: [0] }; rq.requireNumbers = { enabled: true, numbers: [5] };
+  assert(generateTickets(1, lotto, rq, hx).warnings.some((w) => /required number/.test(w)), "zones: required number inside an excluded zone is reported");
+  const zs = base(); zs.excludeZones = { enabled: true, zones: [1] }; zs.zoneSpread = { enabled: true, maxPerZone: 3, minPerZone: 1 };
+  assert(!estimateSpace(lotto, zs, hx).feasible, "zones: min-per-zone contradicts an excluded zone");
+  const bd = base(); bd.birthdayBias.enabled = true; bd.excludeZones = { enabled: true, zones: [3] };
+  assert(!estimateSpace(lotto, bd, hx).feasible, "zones: birthday-bias cannot be met without 32–34");
+  // Eurojackpot has five zones
+  const e = defaultCriteria(euro); for (const k of ["maxRun", "oddEven", "sumRange", "zoneSpread", "parityRun", "maxArithmetic", "sameLastDigit", "sharedMultiple"]) e[k].enabled = false;
+  e.batchOverlap.enabled = false; e.historyExact.enabled = false; e.historySubset.enabled = false; e.excludeZones = { enabled: true, zones: [4, 3] };
+  assert(estimateSpace(euro, e, hx).count === binomial(30, 5) * 66, "zones: Eurojackpot two zones → C(30,5) × 66 stars");
+  // backtest counts draws touching an excluded zone
+  const draws = [[1, 12, 25, 31, 33, 34, 20], [2, 13, 14, 15, 16, 17, 18], [21, 22, 23, 24, 25, 26, 27]].map((m, i) => ({ date: new Date(2024, 0, 1 + i * 7), mains: m.slice().sort((a, b) => a - b), stars: [] }));
+  const bt = historicalImpact(lotto, (() => { const b = base(); b.excludeZones = { enabled: true, zones: [3] }; return b; })(), draws);
+  assert(bt.rules.excludeZones && bt.rules.excludeZones.failed === 1 && bt.rules.excludeZones.tested === 3, "zones: backtest — 1 of 3 past draws used the excluded zone 31–34");
 }
 
 /* ---- windows ---- */
