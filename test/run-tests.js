@@ -33,7 +33,8 @@ const {
   maxSameLastDigit, maxSharedDivisor, zoneOfNumber, weightedSampleDistinct,
   drawsSinceLastSeen, softRuleFailures, estimatePassRate,
   isoWeekOf, isoWeekStart, isoWeeksInYear, coverageByWeek, parseNorskTippingV2, parseHeaderCsv,
-  mergeDrawsByDate, windowsNewestFirst, expectedDrawsInWeek, isoDateKey, drawsExpectedBetween
+  mergeDrawsByDate, windowsNewestFirst, expectedDrawsInWeek, isoDateKey, drawsExpectedBetween,
+  estimateSpace, jackpotCombinations, binomial
 } = vm.runInContext(
   `({ LOTTERIES, sampleDistinct, combinationKeys, longestConsecutiveRun, sumOf, countOdd,
       overlapCount, parseDrawsText, parseDraws, filterDrawsByYears, buildHistoryIndex,
@@ -41,7 +42,8 @@ const {
       maxSameLastDigit, maxSharedDivisor, zoneOfNumber, weightedSampleDistinct,
       drawsSinceLastSeen, softRuleFailures, estimatePassRate,
       isoWeekOf, isoWeekStart, isoWeeksInYear, coverageByWeek, parseNorskTippingV2, parseHeaderCsv,
-      mergeDrawsByDate, windowsNewestFirst, expectedDrawsInWeek, isoDateKey, drawsExpectedBetween })`,
+      mergeDrawsByDate, windowsNewestFirst, expectedDrawsInWeek, isoDateKey, drawsExpectedBetween,
+      estimateSpace, jackpotCombinations, binomial })`,
   context
 );
 
@@ -553,6 +555,52 @@ for (const cfg of [lotto, euro]) {
   assert(drawsExpectedBetween(lotto, new Date(2026, 10, 1), new Date(2026, 10, 5)) === 0, "freshness: up to date mid-week");
   assert(drawsExpectedBetween(euro, new Date(2026, 10, 2), new Date(2026, 10, 5)) === 1, "freshness: Tuesday draw missed, Friday not yet");
   assert(drawsExpectedBetween(euro, new Date(2026, 10, 5), new Date(2026, 10, 1)) === 0, "freshness: reversed range is zero");
+}
+
+/* ---- possibility space ---- */
+{
+  const none = (cfg) => {
+    const c = defaultCriteria(cfg);
+    for (const k of ["maxRun", "oddEven", "sumRange", "zoneSpread", "parityRun", "maxArithmetic", "sameLastDigit", "sharedMultiple", "lowHigh", "birthdayBias"]) c[k].enabled = false;
+    c.batchOverlap.enabled = false; c.historyExact.enabled = false; c.historySubset.enabled = false;
+    return c;
+  };
+  const hx = buildHistoryIndex([], 0);
+  assert(jackpotCombinations(lotto) === 5379616 && jackpotCombinations(euro) === 139838160, "space: jackpot combinations");
+  const all = estimateSpace(lotto, none(lotto), hx);
+  assert(all.exact && all.count === 5379616 && all.share === 1, "space: no rules → every row, exact");
+  const eAll = estimateSpace(euro, none(euro), hx);
+  assert(eAll.count === 139838160, "space: eurojackpot includes star combinations");
+
+  // Excluding two numbers shrinks the space exactly: C(32,7)
+  const ex = none(lotto); ex.excludeNumbers = { enabled: true, numbers: [13, 22] };
+  const exR = estimateSpace(lotto, ex, hx);
+  assert(exR.exact && exR.count === binomial(32, 7), "space: excluded numbers shrink space exactly (" + exR.count + ")");
+
+  // Exact enumeration of a small space matches an independent count (max run 2, four required numbers)
+  const req = none(lotto); req.requireNumbers = { enabled: true, numbers: [1, 10, 20, 30] }; req.maxRun = { enabled: true, value: 2 };
+  const reqR = estimateSpace(lotto, req, hx);
+  let manual = 0;
+  const rest = []; for (let n = 1; n <= 34; n++) if (![1, 10, 20, 30].includes(n)) rest.push(n);
+  for (let a = 0; a < rest.length; a++) for (let b = a + 1; b < rest.length; b++) for (let c = b + 1; c < rest.length; c++) {
+    const row = [1, 10, 20, 30, rest[a], rest[b], rest[c]].sort((x, y) => x - y);
+    if (longestConsecutiveRun(row) <= 2) manual++;
+  }
+  assert(reqR.exact && reqR.count === manual, `space: exact enumeration matches independent count (${reqR.count} vs ${manual})`);
+
+  // Monte-Carlo estimate lands near the exact answer for max-run ≤ 2 (count known: rows with no 3 consecutive)
+  const mc = none(lotto); mc.maxRun = { enabled: true, value: 2 };
+  const mcR = estimateSpace(lotto, mc, hx, 40000);
+  // exact count via dynamic programming over runs
+  const exactNoTriple = (() => { let c = 0; const rows = []; (function rec(start, row) { if (row.length === 7) { if (longestConsecutiveRun(row) <= 2) c++; return; } for (let n = start; n <= 34; n++) { row.push(n); rec(n + 1, row); row.pop(); } })(1, rows); return c; })();
+  assert(!mcR.exact && mcR.lo <= exactNoTriple && exactNoTriple <= mcR.hi, `space: MC interval [${Math.round(mcR.lo)}, ${Math.round(mcR.hi)}] contains exact ${exactNoTriple}`);
+  assert(mcR.share < 1 && mcR.share > 0.3, "space: rule reduces the share");
+
+  // Infeasible rules are reported, adding rules never increases the count
+  const bad = none(lotto); bad.lowHigh = { enabled: true, minLow: 5, minHigh: 5 };
+  assert(!estimateSpace(lotto, bad, hx).feasible, "space: conflict reported");
+  const more = none(lotto); more.maxRun = { enabled: true, value: 2 }; more.oddEven = { enabled: true, minOdd: 3, maxOdd: 4 };
+  assert(estimateSpace(lotto, more, hx, 40000).count < mcR.count, "space: an extra rule lowers the count");
 }
 
 /* ---- windows ---- */

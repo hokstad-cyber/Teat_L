@@ -1440,20 +1440,38 @@
     strictTimer = setTimeout(updateStrictness, 250);
   }
 
+  const fmtInt = (n) => Math.round(n).toLocaleString("en-GB");
+  /** Round to 3 significant figures for estimates. */
+  const sig3 = (n) => {
+    if (n < 1000) return Math.round(n);
+    const mag = Math.pow(10, Math.floor(Math.log10(n)) - 2);
+    return Math.round(n / mag) * mag;
+  };
+  function fmtPct(p) {
+    const v = p * 100;
+    if (v >= 99.995) return "100 %";
+    if (v >= 10) return `${v.toFixed(1)} %`;
+    if (v >= 1) return `${v.toFixed(2)} %`;
+    if (v >= 0.01) return `${v.toFixed(3)} %`;
+    return v === 0 ? "0 %" : "< 0.01 %";
+  }
+
   function updateStrictness() {
     const cfg = LOTTERIES[state.lotteryId];
-    const { criteria, historyIndex, bias } = buildContext(cfg);
+    const { criteria, historyIndex } = buildContext(cfg);
+    const space = estimateSpace(cfg, criteria, historyIndex, 30000);
+    renderSpace(cfg, space);
+
     const box = $("#strictness");
-    const { rate, feasible, problems } = estimatePassRate(cfg, criteria, historyIndex, bias.weights, 1500);
     let level;
     let text;
-    if (!feasible) {
+    if (!space.feasible) {
       level = "conflict";
       $("#strictness-value").textContent = "Conflict";
-      text = problems[0];
+      text = space.problems[0];
     } else {
-      const pct = rate * 100;
-      $("#strictness-value").textContent = pct >= 99.5 ? "None" : pct < 0.1 ? "< 0.1% pass" : `≈ ${pct < 10 ? pct.toFixed(1) : Math.round(pct)}% pass`;
+      const pct = space.share * 100;
+      $("#strictness-value").textContent = pct >= 99.5 ? "None" : pct < 0.1 ? "< 0.1% pass" : `${space.exact ? "" : "≈ "}${pct < 10 ? pct.toFixed(1) : Math.round(pct)}% pass`;
       if (pct >= 40) {
         level = "relaxed";
         text = "Easy-going — most random rows already fit your rules.";
@@ -1469,8 +1487,43 @@
       }
     }
     box.dataset.level = level;
-    $("#strictness-fill").style.width = feasible ? `${Math.max(3, Math.min(100, Math.round(rate * 100)))}%` : "100%";
+    $("#strictness-fill").style.width = space.feasible ? `${Math.max(3, Math.min(100, Math.round(space.share * 100)))}%` : "100%";
     $("#strictness-text").textContent = text;
+  }
+
+  /** Top-of-page comparison: all possible rows vs rows that fit the rules. */
+  function renderSpace(cfg, space) {
+    const card = $("#space-card");
+    const oneIn = fmtInt(space.total);
+    $("#space-total").textContent = fmtInt(space.total);
+    $("#space-total-sub").textContent = cfg.starPick
+      ? `no rules applied · ${cfg.mainPick} of ${cfg.mainMax} numbers × ${cfg.starPick} of ${cfg.starMax} stars`
+      : `no rules applied · ${cfg.mainPick} of ${cfg.mainMax} numbers`;
+    card.dataset.state = space.feasible ? "ok" : "conflict";
+    if (!space.feasible) {
+      $("#space-count").textContent = "—";
+      $("#space-count-sub").textContent = "your rules conflict";
+      $("#space-pct").textContent = "—";
+      $("#space-pct-sub").textContent = "";
+      $("#space-bar-fill").style.width = "100%";
+      $("#space-note").textContent = space.problems[0];
+      return;
+    }
+    const approx = space.exact ? "" : "≈ ";
+    const count = space.exact ? fmtInt(space.count) : fmtInt(sig3(space.count));
+    $("#space-count").textContent = approx + count;
+    $("#space-count-sub").textContent = space.exact
+      ? (space.count === space.total ? "same as above — no rules reduce it" : "counted exactly")
+      : `estimate, likely between ${fmtInt(sig3(space.lo))} and ${fmtInt(sig3(space.hi))}`;
+    $("#space-pct").textContent = approx + fmtPct(space.share);
+    const removed = 1 - space.share;
+    $("#space-pct-sub").textContent = space.count === space.total ? "all rows still possible" : `${fmtPct(removed)} of all rows are ruled out`;
+    $("#space-bar-fill").style.width = `${Math.max(0.4, space.share * 100)}%`;
+    const pct = fmtPct(space.share);
+    $("#space-note").innerHTML = space.count === space.total
+      ? `Every row has the same <strong>1 in ${oneIn}</strong> chance of being the winning row. Add rules above to see how much they narrow the field.`
+      : `Rules narrow which rows you play — they do <strong>not</strong> improve your chances. Each row you play still has exactly <strong>1 in ${oneIn}</strong>. ` +
+        `A random draw fits your rules only about <strong>${pct}</strong> of the time, and when it doesn't, none of your rows can win.`;
   }
 
   /* ---------- collapsible panels ---------- */

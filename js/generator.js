@@ -343,3 +343,91 @@ function estimatePassRate(cfg, criteria, historyIndex, weights, samples) {
   }
   return { rate: pass / n, feasible: true, problems: [] };
 }
+
+/* ======================= Possibility space ======================= */
+
+const SPACE_EXACT_LIMIT = 300000; // enumerate exactly up to this many main-number combinations
+
+/** Call fn(combo) for every k-combination of `pool` (ascending). */
+function forEachCombination(pool, k, fn) {
+  const n = pool.length;
+  if (k < 0 || k > n) return;
+  const idx = [];
+  for (let i = 0; i < k; i++) idx.push(i);
+  const combo = new Array(k);
+  for (;;) {
+    for (let i = 0; i < k; i++) combo[i] = pool[idx[i]];
+    fn(combo);
+    let i = k - 1;
+    while (i >= 0 && idx[i] === n - k + i) i--;
+    if (i < 0) return;
+    idx[i]++;
+    for (let j = i + 1; j < k; j++) idx[j] = idx[j - 1] + 1;
+  }
+}
+
+function anySoftRuleEnabled(criteria) {
+  return ["maxRun", "oddEven", "sumRange", "zoneSpread", "parityRun", "maxArithmetic", "sameLastDigit", "sharedMultiple", "lowHigh", "birthdayBias"]
+    .some((k) => criteria[k] && criteria[k].enabled);
+}
+
+/**
+ * How many of all possible rows satisfy the enabled rules?
+ *
+ *  total      every possible row with no rules (jackpotCombinations)
+ *  count      rows that fit the rules
+ *  share      count / total
+ *  exact      true when counted exactly (no rules, or a small space), else a
+ *             Monte-Carlo estimate with a 95 % Wilson interval [lo, hi]
+ *
+ * Excluded and required numbers shrink the space exactly; style rules,
+ * reuse-from-last-draw and history exclusions are tested on rows sampled
+ * uniformly from that space. Batch overlap and weighting are not
+ * restrictions on the space and are ignored. Star numbers are free, so
+ * they multiply the count.
+ */
+function estimateSpace(cfg, criteria, historyIndex, samples) {
+  const problems = validateCriteriaFeasibility(cfg, criteria);
+  const total = jackpotCombinations(cfg);
+  if (problems.length) return { feasible: false, problems, total, count: 0, share: 0, lo: 0, hi: 0, exact: true };
+
+  const excluded = new Set(criteria.excludeNumbers.enabled ? criteria.excludeNumbers.numbers : []);
+  const required = criteria.requireNumbers.enabled ? criteria.requireNumbers.numbers.slice() : [];
+  const pool = [];
+  for (let n = 1; n <= cfg.mainMax; n++) if (!excluded.has(n) && !required.includes(n)) pool.push(n);
+  const k = cfg.mainPick - required.length;
+  const constrained = binomial(pool.length, k);
+  const starCombos = cfg.starPick ? binomial(cfg.starMax, cfg.starPick) : 1;
+
+  const reuseOn = !!(criteria.reuseLast && criteria.reuseLast.enabled && criteria.reuseLast.numbers.length);
+  const historyOn = !!historyIndex && ((criteria.historyExact.enabled && historyIndex.drawCount > 0) ||
+    (criteria.historySubset.enabled && historyIndex.subsetSize > 0 && historyIndex.subsetKeys.size > 0));
+  const filtering = anySoftRuleEnabled(criteria) || reuseOn || historyOn;
+
+  const result = (count, exact, lo, hi) => ({
+    feasible: true, problems: [], total, constrainedMain: constrained, starCombos,
+    count, share: total ? count / total : 0, lo: lo === undefined ? count : lo, hi: hi === undefined ? count : hi, exact
+  });
+
+  if (!filtering) return result(constrained * starCombos, true);
+
+  const test = (mains) => rowPassesCriteria(mains, cfg, criteria, historyIndex, [], false);
+  const full = (combo) => required.length ? combo.concat(required).sort((a, b) => a - b) : combo.slice();
+
+  if (constrained <= SPACE_EXACT_LIMIT) {
+    let pass = 0;
+    forEachCombination(pool, k, (combo) => { if (test(full(combo))) pass++; });
+    return result(pass * starCombos, true);
+  }
+
+  const n = samples || 30000;
+  let pass = 0;
+  for (let i = 0; i < n; i++) if (test(full(sampleDistinct(pool, k)))) pass++;
+  const p = pass / n;
+  const z = 1.96;
+  const denom = 1 + (z * z) / n;
+  const center = (p + (z * z) / (2 * n)) / denom;
+  const half = (z * Math.sqrt((p * (1 - p)) / n + (z * z) / (4 * n * n))) / denom;
+  const scale = constrained * starCombos;
+  return result(p * scale, false, Math.max(0, center - half) * scale, Math.min(1, center + half) * scale);
+}

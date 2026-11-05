@@ -418,6 +418,29 @@
 
     <!-- ============ MAIN: generated tickets ============ -->
     <section class="content" aria-label="Your rows">
+      <section class="space-card" id="space-card" aria-labelledby="space-title">
+        <h2 id="space-title" class="sr-only">Possible rows and how many fit your rules</h2>
+        <div class="space-grid">
+          <div class="space-col">
+            <span class="space-label">All possible rows</span>
+            <strong id="space-total" class="space-num">—</strong>
+            <span class="space-sub" id="space-total-sub">no rules applied</span>
+          </div>
+          <div class="space-col space-col-rules">
+            <span class="space-label">Rows that fit your rules</span>
+            <strong id="space-count" class="space-num">—</strong>
+            <span class="space-sub" id="space-count-sub"></span>
+          </div>
+          <div class="space-col">
+            <span class="space-label">Share of all possibilities</span>
+            <strong id="space-pct" class="space-num">—</strong>
+            <span class="space-sub" id="space-pct-sub"></span>
+          </div>
+        </div>
+        <div class="space-bar" aria-hidden="true"><div class="space-bar-fill" id="space-bar-fill"></div></div>
+        <p class="space-note" id="space-note"></p>
+      </section>
+
       <div class="content-header">
         <div>
           <h2 id="content-title">Your rows — Norsk Lotto</h2>

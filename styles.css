@@ -1012,3 +1012,32 @@ details[open] > summary .chevron { transform: rotate(-135deg); margin-bottom: -0
 .freshness strong { color: var(--text); }
 .auto-update { margin: 0.2rem 0 0.9rem; }
 .lastdraw-meta .stale { color: var(--gold); }
+
+
+/* ============ Possibility space ============ */
+
+.space-card {
+  margin-bottom: 1.2rem;
+  padding: 1rem 1.2rem 0.9rem;
+  border-radius: var(--radius);
+  background: var(--panel);
+  border: 1px solid var(--panel-edge);
+  box-shadow: var(--shadow-sm);
+}
+.space-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.6rem 1.2rem; }
+.space-col { display: flex; flex-direction: column; gap: 0.15rem; min-width: 0; }
+.space-label { font-size: 0.74rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-dim); }
+.space-num { font-size: 1.7rem; font-weight: 800; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; line-height: 1.15; overflow-wrap: anywhere; }
+.space-col-rules .space-num { color: var(--accent); }
+.space-sub { font-size: 0.78rem; color: var(--text-dim); line-height: 1.4; }
+.space-bar { height: 10px; border-radius: 999px; background: var(--bg-soft); margin: 0.8rem 0 0.6rem; overflow: hidden; border: 1px solid var(--panel-edge); }
+.space-bar-fill { height: 100%; width: 100%; border-radius: 999px; background: linear-gradient(90deg, var(--fill-a), var(--fill-b)); transition: width 0.35s ease; min-width: 3px; }
+.space-card[data-state="conflict"] .space-bar-fill { background: var(--danger); }
+.space-card[data-state="busy"] .space-num { opacity: 0.55; }
+.space-note { margin: 0; font-size: 0.8rem; line-height: 1.5; color: var(--text-dim); }
+.space-note strong { color: var(--text); }
+@media (max-width: 700px) {
+  .space-grid { grid-template-columns: 1fr; }
+  .space-num { font-size: 1.45rem; }
+}
+@media print { .space-card { display: none !important; } }
