@@ -1492,6 +1492,7 @@
     renderHistImpact(cfg, criteria);
     const space = estimateSpace(cfg, criteria, historyIndex, 30000);
     renderSpace(cfg, space);
+    renderRestrictions(cfg, criteria, space, space.feasible ? diagnoseRejections(cfg, criteria, historyIndex, [], null, 3000) : null);
 
     const box = $("#strictness");
     let level;
@@ -1666,6 +1667,108 @@
     } else {
       const share = impact.allPass / impact.total;
       bt.innerHTML = `Past draws: <b>${impact.allPass} of ${impact.total}</b> (${(share * 100).toFixed(share < 0.1 ? 1 : 0)} %) would have passed every rule you have on.`;
+    }
+  }
+
+  /* ---------- restrictions: what limits your numbers (high level) ---------- */
+
+  function severityOf(share) {
+    return share >= 0.95 ? "blocking" : share >= 0.6 ? "heavy" : share >= 0.25 ? "moderate" : "light";
+  }
+  const SEV_LABEL = { blocking: "BLOCKING", heavy: "HEAVY", moderate: "MODERATE", light: "LIGHT" };
+  const SEV_ORDER = { blocking: 3, heavy: 2, moderate: 1, light: 0 };
+
+  function renderRestrictions(cfg, criteria, space, diag) {
+    const banner = $("#restrict-banner");
+    const rows = rowCount();
+    // Active rules with how much of the candidate rows each rejects.
+    const items = (diag && diag.rules ? diag.rules : []).map((r) => Object.assign({}, r));
+    // Overlap between rows can only be predicted, not sampled before a coupon exists.
+    let pHard = diag ? diag.passHard : 1;
+    if (criteria.batchOverlap.enabled && rows > 1) {
+      const ov = overlapAcceptance(cfg, criteria.batchOverlap.maxShared, rows);
+      pHard *= ov.last;
+      items.push(Object.assign(overlapRuleInfo(criteria), { kind: "hard", share: 1 - ov.last, sole: 1 - ov.last, note: `row ${rows} of ${rows} must differ from ${rows - 1} earlier rows` }));
+    }
+    items.sort((p, q) => q.share - p.share);
+    for (const it of items) it.sev = severityOf(it.share);
+    const hardItems = items.filter((i) => i.kind === "hard");
+
+    let level;
+    let title;
+    let sub;
+    if (!space.feasible) {
+      level = "blocked";
+      title = "Blocked — your rules contradict each other";
+      sub = escapeHtml(space.problems[0]);
+    } else if (pHard * MAX_ATTEMPTS_PER_ROW < 5) {
+      const cause = hardItems[0] || items[0];
+      level = "blocked";
+      title = "Blocked — no new rows can be drawn with these rules";
+      sub = cause ? `Main cause: <b>${escapeHtml(cause.name)}</b> rejects <b>${fmtPct(cause.share)}</b> of candidate rows. Switch it off or loosen it below.` : "Loosen the rules below.";
+    } else if ((diag ? diag.passAll : 1) < 0.01 || items.some((i) => i.kind === "hard" && i.share > 0.9)) {
+      level = "tight";
+      title = `Tight — only ${fmtPct(diag ? diag.passAll : 1)} of candidate rows pass every rule`;
+      sub = "Drawing still works, but some style rules will be relaxed on many rows. The biggest restrictions are:";
+    } else {
+      level = "ok";
+      const shown = items.filter((i) => i.share >= 0.25);
+      title = `Rules are workable — ${fmtPct(diag ? diag.passAll : 1)} of candidate rows pass every rule`;
+      sub = shown.length ? "The rules that restrict your numbers most:" : "No single rule restricts your numbers much.";
+    }
+    banner.dataset.level = level;
+    $("#rb-icon").textContent = { ok: "✓", tight: "!", blocked: "✕" }[level];
+    $("#rb-title").textContent = title;
+    $("#rb-sub").innerHTML = sub;
+
+    const list = $("#rb-items");
+    list.innerHTML = "";
+    const minShare = level === "ok" ? 0.25 : 0.1;
+    for (const it of items.filter((i) => i.share >= minShare).slice(0, 5)) {
+      const boxId = HIST_RULE_BOX[it.id];
+      const row = document.createElement("div");
+      row.className = "rb-item";
+      row.dataset.sev = it.sev;
+      row.innerHTML = `<div class="rb-name"><strong>${escapeHtml(it.name)}<span class="sev sev-${it.sev}">${SEV_LABEL[it.sev]}</span></strong><span>${escapeHtml(it.label)}${it.kind === "hard" ? " · cannot be relaxed" : ""}</span></div>` +
+        `<div class="rb-bar" role="img" aria-label="${escapeHtml(it.name)} rejects ${fmtPct(it.share)}"><i style="width:${Math.max(0.5, it.share * 100).toFixed(1)}%"></i></div>` +
+        `<div class="rb-pct">rejects ${escapeHtml(fmtPct(it.share))}</div>` +
+        (boxId ? `<div class="rb-actions"><button type="button" class="btn small" data-off="${it.id}" data-regen="0">Switch off</button><button type="button" class="btn small ghost" data-edit="${it.id}">Edit</button></div>` : "<div></div>");
+      list.appendChild(row);
+    }
+    state.restrictLevel = level;
+    markSeverity(items);
+  }
+
+  /** Colour each rule in the sidebar (and its panel header) by how restrictive it is. */
+  function markSeverity(items) {
+    const bySev = new Map(items.map((i) => [i.id, i]));
+    const panelWorst = {};
+    for (const [rule, boxId] of Object.entries(HIST_RULE_BOX)) {
+      const box = document.getElementById(boxId);
+      const crit = box && box.closest(".criterion");
+      const el = histEls && histEls[rule];
+      const it = bySev.get(rule);
+      const enabled = box && box.checked;
+      const sev = enabled && it ? it.sev : null;
+      if (crit) {
+        if (sev && sev !== "light") crit.dataset.sev = sev; else delete crit.dataset.sev;
+      }
+      if (el && el.chip) {
+        el.chip.className = el.chip.className.replace(/\ssev-chip-\w+/g, "");
+        if (sev && sev !== "light") el.chip.classList.add(`sev-chip-${sev}`);
+      }
+      const panel = crit && crit.closest("details[data-panel]");
+      if (panel && sev) {
+        const key = panel.dataset.panel;
+        if (!panelWorst[key] || SEV_ORDER[sev] > SEV_ORDER[panelWorst[key]]) panelWorst[key] = sev;
+      }
+    }
+    for (const details of document.querySelectorAll("details[data-panel]")) {
+      const badge = details.querySelector(".panel-count");
+      if (!badge) continue;
+      badge.className = badge.className.replace(/\ssev-\w+/g, "");
+      const w = panelWorst[details.dataset.panel];
+      if (w && SEV_ORDER[w] >= 1) badge.classList.add(`sev-${w}`);
     }
   }
 
@@ -2110,7 +2213,7 @@
     $("#history-download").addEventListener("click", downloadDataset);
     $("#coverage-fetch").addEventListener("click", fetchHistoryChain);
     $("#space-to-dashboard").addEventListener("click", () => setView("dashboard"));
-    $("#diag-rules").addEventListener("click", (e) => {
+    const onRuleAction = (e) => {
       const off = e.target.closest("[data-off]");
       const edit = e.target.closest("[data-edit]");
       const rule = (off || edit || {}).dataset && (off ? off.dataset.off : edit.dataset.edit);
@@ -2122,7 +2225,7 @@
         box.dispatchEvent(new Event("change", { bubbles: true }));
         syncCriterionBodies();
         updatePanelCounts();
-        generate();
+        if (off.dataset.regen !== "0") generate(); else scheduleStrictness();
       } else {
         const target = RULE_TARGET[rule];
         const panel = target ? target[0] : (rule === "batchOverlap" ? "yours" : null);
@@ -2131,7 +2234,9 @@
         wrap.scrollIntoView({ block: "center" });
         box.focus({ preventScroll: true });
       }
-    });
+    };
+    $("#diag-rules").addEventListener("click", onRuleAction);
+    $("#rb-items").addEventListener("click", onRuleAction);
 
     // View tabs (the picker stays exactly as it was).
     $("#tab-picker").addEventListener("click", () => setView("picker"));

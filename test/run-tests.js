@@ -34,7 +34,7 @@ const {
   drawsSinceLastSeen, softRuleFailures, estimatePassRate,
   isoWeekOf, isoWeekStart, isoWeeksInYear, coverageByWeek, parseNorskTippingV2, parseHeaderCsv,
   mergeDrawsByDate, windowsNewestFirst, expectedDrawsInWeek, isoDateKey, drawsExpectedBetween,
-  estimateSpace, jackpotCombinations, binomial, ruleBreakdown, ruleCatalog, historicalImpact, diagnoseRejections, ruleStrictness
+  estimateSpace, jackpotCombinations, binomial, ruleBreakdown, ruleCatalog, historicalImpact, diagnoseRejections, ruleStrictness, overlapAcceptance
 } = vm.runInContext(
   `({ LOTTERIES, sampleDistinct, combinationKeys, longestConsecutiveRun, sumOf, countOdd,
       overlapCount, parseDrawsText, parseDraws, filterDrawsByYears, buildHistoryIndex,
@@ -43,7 +43,7 @@ const {
       drawsSinceLastSeen, softRuleFailures, estimatePassRate,
       isoWeekOf, isoWeekStart, isoWeeksInYear, coverageByWeek, parseNorskTippingV2, parseHeaderCsv,
       mergeDrawsByDate, windowsNewestFirst, expectedDrawsInWeek, isoDateKey, drawsExpectedBetween,
-      estimateSpace, jackpotCombinations, binomial, ruleBreakdown, ruleCatalog, historicalImpact, diagnoseRejections, ruleStrictness })`,
+      estimateSpace, jackpotCombinations, binomial, ruleBreakdown, ruleCatalog, historicalImpact, diagnoseRejections, ruleStrictness, overlapAcceptance })`,
   context
 );
 
@@ -685,6 +685,15 @@ for (const cfg of [lotto, euro]) {
   assert(st.historyExact === undefined, "strictness: history rules omitted without history");
   const h2 = buildHistoryIndex([{ date: null, mains: [1, 2, 3, 4, 5, 6, 7], stars: [] }], 0);
   assert(ruleStrictness(lotto, defaultCriteria(lotto), h2, 500).historyExact === 0, "strictness: one past row rejects ~0 % of rows");
+}
+
+/* ---- overlap acceptance ---- */
+{
+  const o0 = overlapAcceptance(lotto, 0, 10);
+  assert(Math.abs(o0.one - binomial(27, 7) / binomial(34, 7)) < 1e-12, "overlap: P(no shared number) = C(27,7)/C(34,7)");
+  assert(o0.last < 1e-6, "overlap: 10 rows with no shared numbers is practically impossible (" + o0.last + ")");
+  assert(Math.abs(overlapAcceptance(lotto, 7, 10).last - 1) < 1e-12, "overlap: allowing 7 shared never restricts");
+  assert(overlapAcceptance(lotto, 4, 10).last > 0.9, "overlap: default ≤4 hardly restricts");
 }
 
 /* ---- windows ---- */

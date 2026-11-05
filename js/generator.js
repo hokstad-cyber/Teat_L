@@ -698,3 +698,17 @@ function ruleStrictness(cfg, criteria, historyIndex, samples) {
   for (const t of tests) out[t.k] = used ? rej[t.k] / used : 0;
   return out;
 }
+
+/**
+ * Chance that a fresh random row shares at most `maxShared` numbers with one
+ * given earlier row (hypergeometric), and the approximate chance that row
+ * number `rows` passes against all `rows - 1` earlier ones.
+ */
+function overlapAcceptance(cfg, maxShared, rows) {
+  const k = cfg.mainPick;
+  const total = binomial(cfg.mainMax, k);
+  let ok = 0;
+  for (let j = 0; j <= Math.min(maxShared, k); j++) ok += binomial(k, j) * binomial(cfg.mainMax - k, k - j);
+  const one = total ? ok / total : 1;
+  return { one, last: Math.pow(one, Math.max(0, rows - 1)) };
+}

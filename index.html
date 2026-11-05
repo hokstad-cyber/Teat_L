@@ -3,9 +3,9 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="build" content="3c70333" />
+  <meta name="build" content="7f508b3" />
   <title>LykkeTall — Smart Lottery Number Picker</title>
-  <link rel="stylesheet" href="styles.css?v=fa465962" />
+  <link rel="stylesheet" href="styles.css?v=aa2be0a0" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='45' fill='%23e8336d'/><text x='50' y='64' font-size='44' text-anchor='middle' fill='white' font-family='Arial'>7</text></svg>" />
 </head>
 <body data-lottery="lotto">
@@ -434,6 +434,14 @@
 
     <!-- ============ MAIN: generated tickets ============ -->
     <section class="content" aria-label="Your rows">
+      <section class="restrict" id="restrict-banner" data-level="ok" aria-labelledby="rb-title" aria-live="polite">
+        <div class="rb-head">
+          <span class="rb-icon" id="rb-icon" aria-hidden="true">✓</span>
+          <div class="rb-text"><strong id="rb-title">Checking your rules…</strong><span id="rb-sub"></span></div>
+        </div>
+        <div id="rb-items" class="rb-items"></div>
+      </section>
+
       <section class="space-card" id="space-card" aria-labelledby="space-title">
         <h2 id="space-title" class="sr-only">Possible rows and how many fit your rules</h2>
         <div class="space-grid">
@@ -686,7 +694,7 @@
   <script src="js/util.js?v=c24053fd"></script>
   <script src="js/history.js?v=6d050857"></script>
   <script src="js/crawler.js?v=320e4439"></script>
-  <script src="js/generator.js?v=4ed6fb67"></script>
-  <script src="js/app.js?v=bd1330d3"></script>
+  <script src="js/generator.js?v=24c5d2f2"></script>
+  <script src="js/app.js?v=1a021607"></script>
 </body>
 </html>

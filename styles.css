@@ -1236,3 +1236,53 @@ details[open] > summary .chevron { transform: rotate(-135deg); margin-bottom: -0
 .topbar-filter[data-state="conflict"] .tf-out, .topbar-filter[data-state="conflict"] .tf-pct { color: var(--danger); }
 @media (max-width: 900px) { .topbar-filter { grid-template-columns: 1fr; } .tf-rest { white-space: normal; } }
 @media print { .topbar-filter { display: none !important; } }
+
+
+/* ============ Restrictions banner & severity colours ============ */
+
+.restrict { margin-bottom: 1.2rem; padding: 1rem 1.2rem; border-radius: var(--radius); border: 1px solid var(--panel-edge); background: var(--panel); border-left-width: 6px; }
+.restrict[data-level="ok"] { border-left-color: var(--ok); background: linear-gradient(90deg, rgba(63,210,139,0.08), transparent 60%), var(--panel); }
+.restrict[data-level="tight"] { border-left-color: var(--gold); background: linear-gradient(90deg, rgba(255,194,75,0.10), transparent 60%), var(--panel); }
+.restrict[data-level="blocked"] { border-color: rgba(255,93,108,0.55); border-left-color: var(--danger); background: linear-gradient(90deg, rgba(255,93,108,0.14), transparent 65%), var(--panel); }
+.rb-head { display: flex; gap: 0.8rem; align-items: flex-start; }
+.rb-icon { flex: none; width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; font-weight: 800; font-size: 1.1rem; background: rgba(255,255,255,0.08); }
+.restrict[data-level="ok"] .rb-icon { color: var(--ok); }
+.restrict[data-level="tight"] .rb-icon { color: var(--gold); }
+.restrict[data-level="blocked"] .rb-icon { color: var(--danger); background: rgba(255,93,108,0.18); }
+.rb-text { display: flex; flex-direction: column; gap: 0.15rem; line-height: 1.45; }
+.rb-text strong { font-size: 1.02rem; }
+.rb-text span { font-size: 0.84rem; color: var(--text-dim); }
+.rb-text span b { color: var(--text); }
+.rb-items { display: grid; gap: 0.45rem; margin-top: 0.8rem; }
+.rb-items:empty { display: none; }
+.rb-item { display: grid; grid-template-columns: minmax(150px, 240px) 1fr auto auto; gap: 0.5rem 0.8rem; align-items: center; padding: 0.5rem 0.7rem; border-radius: var(--radius-sm); background: rgba(0,0,0,0.22); border: 1px solid var(--panel-edge); }
+.rb-item .rb-name strong { display: block; font-size: 0.85rem; }
+.rb-item .rb-name span { font-size: 0.74rem; color: var(--text-dim); }
+.sev { display: inline-block; font-size: 0.62rem; font-weight: 800; letter-spacing: 0.05em; padding: 0.05rem 0.45rem; border-radius: 999px; margin-left: 0.4rem; vertical-align: middle; border: 1px solid transparent; }
+.sev-blocking { color: #fff; background: var(--danger); }
+.sev-heavy { color: var(--danger); border-color: rgba(255,93,108,0.6); }
+.sev-moderate { color: var(--gold); border-color: rgba(255,194,75,0.6); }
+.sev-light { color: var(--ok); border-color: rgba(63,210,139,0.5); }
+.rb-bar { height: 14px; border-radius: 5px; background: var(--bg-soft); overflow: hidden; }
+.rb-bar i { display: block; height: 100%; border-radius: 5px; min-width: 2px; }
+.rb-item[data-sev="blocking"] .rb-bar i, .rb-item[data-sev="heavy"] .rb-bar i { background: linear-gradient(90deg, #ff8a95, var(--danger)); }
+.rb-item[data-sev="moderate"] .rb-bar i { background: linear-gradient(90deg, #ffd98a, var(--gold)); }
+.rb-item[data-sev="light"] .rb-bar i { background: linear-gradient(90deg, #7fe3b4, var(--ok)); }
+.rb-pct { font-size: 0.85rem; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.rb-actions { display: flex; gap: 0.35rem; }
+@media (max-width: 760px) { .rb-item { grid-template-columns: 1fr; } }
+
+/* sidebar: severity on each rule and panel */
+.criterion[data-sev="blocking"], .criterion[data-sev="heavy"] { box-shadow: inset 4px 0 0 var(--danger); background: rgba(255,93,108,0.06); }
+.criterion[data-sev="moderate"] { box-shadow: inset 4px 0 0 var(--gold); }
+.criterion[data-sev] { padding-left: 0.6rem; }
+.hist-chip.sev-chip-blocking { background: var(--danger); color: #fff; border-color: var(--danger); }
+.hist-chip.sev-chip-blocking b { color: #fff; }
+.hist-chip.sev-chip-heavy { border-color: var(--danger); }
+.hist-chip.sev-chip-moderate { border-color: var(--gold); }
+.panel-count.sev-blocking, .panel-count.sev-heavy { color: #fff; background: var(--danger); border-color: var(--danger); }
+.panel-count.sev-moderate { color: #2a1c00; background: var(--gold); border-color: var(--gold); }
+.rb-item .rb-name .sev-blocking { color: #fff; }
+.rb-item .rb-name .sev-heavy { color: var(--danger); }
+.rb-item .rb-name .sev-moderate { color: var(--gold); }
+.rb-item .rb-name .sev-light { color: var(--ok); }
