@@ -8,26 +8,61 @@
     lotteryId: "lotto",
     /** draws per lottery id */
     history: { lotto: [], eurojackpot: [] },
+    /** manual override of the last draw per lottery id (mains/stars) or null */
+    lastDrawOverride: { lotto: null, eurojackpot: null },
+    /** effective last draw for the active lottery, and its main-number set */
+    lastDraw: null,
+    lastDrawSet: new Set(),
     tickets: [],
-    generatedFor: null
+    generatedFor: null,
+    /** price per row in NOK per lottery (user-editable) */
+    rowPrice: { lotto: LOTTERIES.lotto.defaultRowPrice, eurojackpot: LOTTERIES.eurojackpot.defaultRowPrice },
+    /** where loaded draws came from, per lottery: [{ kind, label, count, at }] */
+    provenance: { lotto: [], eurojackpot: [] },
+    /** report from the last automatic collection, per lottery */
+    lastCollect: { lotto: null, eurojackpot: null },
+    /** "picker" (home) or "dashboard" */
+    view: "picker",
+    /** active preset id, or "custom" once the user changes a rule */
+    preset: null,
+    /** which collapsible panels are open */
+    panelsOpen: {}
   };
 
   const STORAGE_KEY = "lykketall.v1";
 
   /* ---------- persistence ---------- */
 
+  let panelsRestored = false;
+
   function saveState() {
+    // Read panel state from the DOM rather than trusting the async "toggle"
+    // event, which can fire after another save.
+    if (panelsRestored) {
+      for (const d of document.querySelectorAll("details[data-panel]")) state.panelsOpen[d.dataset.panel] = d.open;
+    }
     try {
       const serializable = {
         lotteryId: state.lotteryId,
         history: {},
-        settings: collectSettings()
+        lastDrawOverride: state.lastDrawOverride,
+        settings: collectSettings(),
+        rowPrice: state.rowPrice,
+        provenance: state.provenance,
+        preset: state.preset,
+        panelsOpen: state.panelsOpen,
+        tickets: state.tickets,
+        generatedFor: state.generatedFor,
+        lastCollect: state.lastCollect
       };
       for (const id of Object.keys(state.history)) {
         serializable.history[id] = state.history[id].map((d) => ({
-          date: d.date ? d.date.toISOString().slice(0, 10) : null,
+          date: d.date ? isoDateKey(d.date) : null,
           mains: d.mains,
-          stars: d.stars
+          stars: d.stars,
+          bonus: d.bonus && d.bonus.length ? d.bonus : undefined,
+          source: d.source || undefined,
+          drawId: d.drawId || undefined
         }));
       }
       localStorage.setItem(STORAGE_KEY, JSON.stringify(serializable));
@@ -52,27 +87,81 @@
         state.history[id] = arr
           .filter((d) => d && Array.isArray(d.mains))
           .map((d) => ({
-            date: d.date ? new Date(d.date) : null,
+            date: d.date ? parseIsoDate(d.date) || new Date(d.date) : null,
             mains: d.mains,
-            stars: Array.isArray(d.stars) ? d.stars : []
+            stars: Array.isArray(d.stars) ? d.stars : [],
+            bonus: Array.isArray(d.bonus) ? d.bonus : [],
+            source: typeof d.source === "string" ? d.source : "unknown",
+            drawId: Number.isInteger(d.drawId) ? d.drawId : null
           }));
       }
     }
+    if (data.lastDrawOverride && typeof data.lastDrawOverride === "object") {
+      for (const id of Object.keys(state.lastDrawOverride)) {
+        const o = data.lastDrawOverride[id];
+        if (o && Array.isArray(o.mains)) {
+          state.lastDrawOverride[id] = {
+            mains: o.mains,
+            stars: Array.isArray(o.stars) ? o.stars : [],
+            manual: !!o.manual,
+            date: typeof o.date === "string" ? o.date : undefined
+          };
+        }
+      }
+    }
     if (data.settings) applySettings(data.settings);
+    if (data.rowPrice && typeof data.rowPrice === "object") {
+      for (const id of Object.keys(state.rowPrice)) {
+        const v = Number(data.rowPrice[id]);
+        if (Number.isFinite(v) && v >= 0) state.rowPrice[id] = v;
+      }
+    }
+    if (data.provenance && typeof data.provenance === "object") {
+      for (const id of Object.keys(state.provenance)) {
+        if (Array.isArray(data.provenance[id])) state.provenance[id] = data.provenance[id].slice(-8);
+      }
+    }
+    if (typeof data.preset === "string") state.preset = data.preset;
+    if (data.lastCollect && typeof data.lastCollect === "object") {
+      for (const id of Object.keys(state.lastCollect)) if (data.lastCollect[id]) state.lastCollect[id] = data.lastCollect[id];
+    }
+    if (data.panelsOpen && typeof data.panelsOpen === "object") state.panelsOpen = data.panelsOpen;
+    if (Array.isArray(data.tickets) && data.generatedFor && LOTTERIES[data.generatedFor]) {
+      state.tickets = data.tickets.filter((t) => t && Array.isArray(t.mains)).map((t) => ({
+        mains: t.mains,
+        stars: Array.isArray(t.stars) ? t.stars : [],
+        relaxed: !!t.relaxed,
+        relaxedRules: Array.isArray(t.relaxedRules) ? t.relaxedRules : [],
+        locked: !!t.locked
+      }));
+      state.generatedFor = data.generatedFor;
+    }
   }
 
   const SETTING_IDS = [
     "crit-maxrun", "crit-maxrun-value",
     "crit-oddeven", "crit-oddeven-min", "crit-oddeven-max",
     "crit-sum", "crit-sum-min", "crit-sum-max",
-    "crit-zone", "crit-zone-max",
+    "crit-zone", "crit-zone-max", "crit-zone-min",
+    "crit-zonesused", "crit-zonesused-min", "crit-zonesused-max",
+    "crit-parity", "crit-parity-value",
+    "crit-arith", "crit-arith-value",
+    "ap-lastdigit", "ap-lastdigit-max",
+    "ap-multiple", "ap-multiple-max",
+    "ap-lowhigh", "ap-lowhigh-low", "ap-lowhigh-high",
     "crit-birthday",
+    "bias-overdue", "bias-overdue-strength",
+    "bias-cold", "bias-cold-strength", "bias-cold-years",
+    "bias-half", "bias-half-value",
     "crit-overlap", "crit-overlap-max",
     "crit-exclude", "crit-exclude-list",
     "crit-require", "crit-require-list",
     "hist-window", "hist-window-years",
     "hist-exact",
-    "hist-subset", "hist-subset-size"
+    "hist-subset", "hist-subset-size",
+    "auto-update",
+    "reuse-enabled", "reuse-min", "reuse-max",
+    "row-count"
   ];
 
   function collectSettings() {
@@ -104,6 +193,25 @@
       .filter((n, i, arr) => arr.indexOf(n) === i);
   }
 
+  /** Strip showing the zones of the active lottery and how many a row may touch. */
+  function renderZonesDemo() {
+    const cfg = LOTTERIES[state.lotteryId];
+    const wrap = $("#zones-demo");
+    if (!wrap) return;
+    wrap.innerHTML = "";
+    for (let z = 0; z < lotteryZoneCount(cfg); z++) {
+      const d = document.createElement("div");
+      d.className = "zd";
+      d.innerHTML = `${z * cfg.zoneSize + 1}–${Math.min(cfg.mainMax, (z + 1) * cfg.zoneSize)}<small>zone ${z + 1}</small>`;
+      wrap.appendChild(d);
+    }
+    const zc = lotteryZoneCount(cfg);
+    const lo = Math.min(intVal("crit-zonesused-min", 1), intVal("crit-zonesused-max", 3));
+    const hi = Math.max(intVal("crit-zonesused-min", 1), intVal("crit-zonesused-max", 3));
+    $("#zones-hint").textContent = `${cfg.name} has ${zc} zones of ten. Each row may touch ${lo === hi ? "exactly " + lo : lo + " to " + hi} of them` +
+      (hi < zc ? ` — so at least ${zc - hi} zone${zc - hi === 1 ? "" : "s"} stay${zc - hi === 1 ? "s" : ""} empty in every row.` : ".");
+  }
+
   function intVal(id, fallback) {
     const v = parseInt(document.getElementById(id).value, 10);
     return Number.isInteger(v) ? v : fallback;
@@ -122,7 +230,25 @@
         min: intVal("crit-sum-min", cfg.defaultSumMin),
         max: intVal("crit-sum-max", cfg.defaultSumMax)
       },
-      zoneSpread: { enabled: $("#crit-zone").checked, maxPerZone: intVal("crit-zone-max", 3) },
+      zoneSpread: {
+        enabled: $("#crit-zone").checked,
+        maxPerZone: intVal("crit-zone-max", 3),
+        minPerZone: intVal("crit-zone-min", 0)
+      },
+      zonesUsed: {
+        enabled: $("#crit-zonesused").checked,
+        min: Math.min(intVal("crit-zonesused-min", 1), intVal("crit-zonesused-max", 3)),
+        max: Math.max(intVal("crit-zonesused-min", 1), intVal("crit-zonesused-max", 3))
+      },
+      parityRun: { enabled: $("#crit-parity").checked, value: intVal("crit-parity-value", 3) },
+      maxArithmetic: { enabled: $("#crit-arith").checked, value: intVal("crit-arith-value", 3) },
+      sameLastDigit: { enabled: $("#ap-lastdigit").checked, max: intVal("ap-lastdigit-max", 3) },
+      sharedMultiple: { enabled: $("#ap-multiple").checked, max: intVal("ap-multiple-max", 4) },
+      lowHigh: {
+        enabled: $("#ap-lowhigh").checked,
+        minLow: intVal("ap-lowhigh-low", 1),
+        minHigh: intVal("ap-lowhigh-high", 1)
+      },
       birthdayBias: { enabled: $("#crit-birthday").checked },
       excludeNumbers: {
         enabled: $("#crit-exclude").checked,
@@ -134,7 +260,15 @@
       },
       batchOverlap: { enabled: $("#crit-overlap").checked, maxShared: intVal("crit-overlap-max", 4) },
       historyExact: { enabled: $("#hist-exact").checked },
-      historySubset: { enabled: $("#hist-subset").checked }
+      historySubset: { enabled: $("#hist-subset").checked },
+      reuseLast: {
+        // Reuse is a shared setting but the last draw is per lottery: without
+        // one, the rule is skipped (with a warning) instead of blocking.
+        enabled: $("#reuse-enabled").checked && !!state.lastDraw,
+        min: Math.min(intVal("reuse-min", 0), intVal("reuse-max", 0)),
+        max: Math.max(intVal("reuse-min", 0), intVal("reuse-max", 0)),
+        numbers: state.lastDraw ? state.lastDraw.mains.slice() : []
+      }
     };
   }
 
@@ -146,8 +280,20 @@
 
   /* ---------- lottery switching ---------- */
 
-  function switchLottery(id) {
+  function rowCount() {
+    return Math.max(1, Math.min(50, intVal("row-count", 10)));
+  }
+
+  function updateGenerateLabel() {
+    const n = rowCount();
+    $("#btn-generate").textContent = `⟳ Generate ${n} row${n === 1 ? "" : "s"}`;
+  }
+
+  /** `initial` is true on page load: keep the user's saved values instead of
+      resetting lottery-dependent defaults. */
+  function switchLottery(id, initial) {
     const cfg = LOTTERIES[id];
+    const changed = !initial && state.lotteryId !== id;
     state.lotteryId = id;
     document.body.dataset.lottery = id;
     $("#switch-lotto").classList.toggle("active", id === "lotto");
@@ -155,15 +301,22 @@
     $("#switch-eurojackpot").classList.toggle("active", id === "eurojackpot");
     $("#switch-eurojackpot").setAttribute("aria-selected", id === "eurojackpot");
 
-    $("#content-title").textContent = `Your 10 rows — ${cfg.name}`;
+    $("#content-title").textContent = `Your rows — ${cfg.name}`;
+    const odds = jackpotCombinations(cfg).toLocaleString("en-GB");
     $("#content-sub").textContent =
-      cfg.starPick > 0
+      (cfg.starPick > 0
         ? `${cfg.mainPick} numbers from 1–${cfg.mainMax} + ${cfg.starPick} star numbers from 1–${cfg.starMax} · draws ${cfg.drawDay}`
-        : `${cfg.mainPick} numbers from 1–${cfg.mainMax} · draw every ${cfg.drawDay}`;
+        : `${cfg.mainPick} numbers from 1–${cfg.mainMax} · draw every ${cfg.drawDay}`) +
+      ` · jackpot odds 1 in ${odds} per row`;
+    $("#row-price").value = state.rowPrice[id];
 
-    // Refresh lottery-dependent defaults and bounds.
-    $("#crit-sum-min").value = cfg.defaultSumMin;
-    $("#crit-sum-max").value = cfg.defaultSumMax;
+    // Refresh lottery-dependent defaults and bounds (only on a real switch,
+    // so saved settings survive a reload).
+    if (changed) {
+      $("#crit-sum-min").value = cfg.defaultSumMin;
+      $("#crit-sum-max").value = cfg.defaultSumMax;
+      if (state.preset && PRESETS[state.preset]) applyPreset(state.preset, true);
+    }
     $("#crit-oddeven-min").max = cfg.mainPick;
     $("#crit-oddeven-max").max = cfg.mainPick;
     if (intVal("crit-oddeven-max", cfg.mainPick) > cfg.mainPick) $("#crit-oddeven-max").value = cfg.mainPick;
@@ -171,31 +324,65 @@
     $("#hist-subset-size").max = cfg.mainPick;
     if (intVal("hist-subset-size", 4) > cfg.mainPick) $("#hist-subset-size").value = cfg.mainPick - 1;
 
-    renderPresets(cfg);
-    clearTickets();
-    refreshHistoryStatus();
-    renderStats();
-    saveState();
-  }
+    // Zones used: bounded by how many zones this lottery has.
+    const zc = lotteryZoneCount(cfg);
+    for (const id of ["crit-zonesused-min", "crit-zonesused-max"]) $("#" + id).max = zc;
+    if (intVal("crit-zonesused-max", 3) > zc) $("#crit-zonesused-max").value = zc;
+    if (intVal("crit-zonesused-min", 1) > zc) $("#crit-zonesused-min").value = 1;
+    renderZonesDemo();
 
-  function renderPresets(cfg) {
-    const wrap = $("#history-presets");
-    wrap.innerHTML = "";
-    for (const src of cfg.sources) {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.textContent = `↳ ${src.label}`;
-      btn.title = src.note;
-      btn.addEventListener("click", () => {
-        $("#history-url").value = src.url;
-      });
-      wrap.appendChild(btn);
+    // Anti-pattern bounds depend on how many numbers a row holds.
+    for (const id of ["crit-arith-value", "ap-lastdigit-max", "ap-multiple-max", "ap-lowhigh-low", "ap-lowhigh-high"]) {
+      $("#" + id).max = cfg.mainPick;
     }
+    if (intVal("crit-arith-value", 3) > cfg.mainPick) $("#crit-arith-value").value = cfg.mainPick;
+    if (intVal("ap-lastdigit-max", 3) > cfg.mainPick) $("#ap-lastdigit-max").value = cfg.mainPick;
+    if (intVal("ap-multiple-max", 4) > cfg.mainPick) $("#ap-multiple-max").value = cfg.mainPick;
+
+    // Reuse range spans 0..mainPick for this lottery.
+    $("#reuse-min").max = cfg.mainPick;
+    $("#reuse-max").max = cfg.mainPick;
+    if (intVal("reuse-min", 0) > cfg.mainPick) $("#reuse-min").value = 0;
+    if (intVal("reuse-max", 0) > cfg.mainPick) $("#reuse-max").value = cfg.mainPick;
+
+    // Keep restored rows on load if they belong to this lottery.
+    if (initial && state.generatedFor === id && state.tickets.length) {
+      refreshLastDraw();
+      renderTickets(cfg);
+    } else {
+      clearTickets();
+      refreshLastDraw();
+    }
+    refreshHistoryStatus();
+    syncReuseUI();
+    renderStats();
+    renderProvenance();
+    renderCoverage();
+    renderFreshness();
+    $("#fetch-banner").hidden = true;
+    const lc = state.lastCollect[id];
+    if (lc && lc.sources) renderSourceStatus(lc.sources.map((x) => Object.assign({ errors: [] }, x)), true);
+    else { $("#source-status").innerHTML = ""; $("#source-status-wrap").hidden = true; delete $("#source-status-wrap").dataset.done; }
+    updatePanelCounts();
+    scheduleStrictness();
+    saveState();
   }
 
   /* ---------- history ---------- */
 
-  function addDraws(draws, sourceLabel) {
+  const PROVENANCE_KINDS = {
+    "nt-api-v2": "Norsk Tipping's results API",
+    "bundled-csv": "the dataset shipped with the app",
+    "thirdparty-csv": "an independent public dataset",
+    "nt-api-legacy": "Norsk Tipping's legacy API",
+    crawl: "unofficial Norsk Tipping data (crawled)",
+    paste: "draws you pasted",
+    file: "an imported file",
+    demo: "synthetic demo data — not real results"
+  };
+
+  function addDraws(draws, sourceLabel, kind) {
+    if (kind) for (const d of draws) if (!d.source) d.source = kind === "paste" ? "manual" : kind;
     if (!draws.length) {
       setHistoryStatus(`Could not find any valid ${LOTTERIES[state.lotteryId].name} draws in ${sourceLabel}. Check the format: one draw per line with a date and the winning numbers.`, false);
       return;
@@ -204,8 +391,72 @@
     state.history[state.lotteryId] = dedupeDraws(state.history[state.lotteryId].concat(draws));
     const added = state.history[state.lotteryId].length - before;
     refreshHistoryStatus(`Added ${added} new draw${added === 1 ? "" : "s"} from ${sourceLabel} (${draws.length - added} duplicates skipped).`);
+    if (kind) {
+      state.provenance[state.lotteryId].push({ kind, label: sourceLabel, count: added, at: new Date().toISOString() });
+      state.provenance[state.lotteryId] = state.provenance[state.lotteryId].slice(-8);
+    }
     renderStats();
+    refreshLastDraw();
+    renderProvenance();
+    renderCoverage();
+    renderFreshness();
+    updatePanelCounts();
+    scheduleStrictness();
     saveState();
+  }
+
+  /** Where the loaded data came from, how much of the date range it covers,
+      and when it was loaded — shown next to everything that depends on it. */
+  function provenanceSummary() {
+    const id = state.lotteryId;
+    const cfg = LOTTERIES[id];
+    const all = state.history[id];
+    if (!all.length) return null;
+    const entries = state.provenance[id];
+    const kinds = [...new Set(entries.map((e) => e.kind))];
+    const range = drawsDateRange(all);
+    const fmt = (d) => d.toLocaleDateString("en-GB", { month: "short", year: "numeric" });
+    const last = entries.length ? new Date(entries[entries.length - 1].at) : null;
+
+    let coverage = null;
+    const dated = all.filter((d) => d.date).length;
+    if (range.min && range.max && dated > 10) {
+      const weeks = (range.max - range.min) / (7 * 86400000) + 1;
+      coverage = Math.min(1, dated / (weeks * cfg.drawsPerWeek));
+    }
+    const sources = kinds.length ? kinds.map((k) => PROVENANCE_KINDS[k] || k).join(" + ") : "earlier sessions";
+    let text = `<strong>Source:</strong> ${sources} · ${all.length} draws`;
+    if (range.min) text += ` · ${fmt(range.min)} – ${fmt(range.max)}`;
+    if (last) text += ` · loaded ${last.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}`;
+    let level = "ok";
+    if (kinds.includes("demo")) {
+      level = "demo";
+      text += ". Includes synthetic demo data, so statistics here are not real.";
+    } else if (kinds.some((k) => k === "thirdparty-csv" || k === "nt-api-legacy" || k === "crawl")) {
+      level = "caution";
+      text += ". Partly from unofficial sources — check important numbers against Norsk Tipping.";
+    } else if (kinds.includes("nt-api-v2") || kinds.includes("bundled-csv")) {
+      text += ". Official draw data via Norsk Tipping's results API.";
+    }
+    if (coverage !== null && coverage < 0.85) {
+      level = level === "demo" ? "demo" : "caution";
+      text += ` Covers only about ${Math.round(coverage * 100)}% of the draws expected in this period — the data may be incomplete.`;
+    }
+    return { text, level };
+  }
+
+  function renderProvenance() {
+    const p = provenanceSummary();
+    for (const el of [$("#history-provenance"), $("#stats-provenance")]) {
+      if (!p) {
+        el.hidden = true;
+        continue;
+      }
+      el.hidden = false;
+      el.innerHTML = p.text;
+      el.classList.toggle("caution", p.level === "caution");
+      el.classList.toggle("demo", p.level === "demo");
+    }
   }
 
   function setHistoryStatus(text, loaded) {
@@ -229,39 +480,489 @@
     setHistoryStatus(`${prefix ? prefix + " " : ""}${all.length} ${LOTTERIES[state.lotteryId].name} draws loaded${rangeText}${windowText}.`, true);
   }
 
-  async function fetchHistory() {
-    const url = $("#history-url").value.trim();
-    if (!url) {
-      setHistoryStatus("Enter a URL first, or pick one of the suggested sources.", false);
+  /* ---------- last draw + reuse ---------- */
+
+  /** Most recent dated draw in the full history (undated draws ignored). */
+  function newestHistoryDraw() {
+    let best = null;
+    for (const d of state.history[state.lotteryId]) {
+      if (!d.date) continue;
+      if (!best || d.date > best.date) best = d;
+    }
+    return best;
+  }
+
+  /** Recompute the effective last draw (manual override wins) and redraw it. */
+  function refreshLastDraw() {
+    const id = state.lotteryId;
+    const override = state.lastDrawOverride[id];
+    let draw;
+    if (override) {
+      draw = {
+        date: override.date ? new Date(override.date) : null,
+        mains: override.mains.slice(),
+        stars: (override.stars || []).slice(),
+        source: override.manual ? "manual" : "picked"
+      };
+    } else {
+      draw = newestHistoryDraw();
+      if (draw) draw = { ...draw, source: "newest" };
+    }
+    state.lastDraw = draw;
+    state.lastDrawSet = new Set(draw ? draw.mains : []);
+    renderLastDraw();
+  }
+
+  function renderLastDraw() {
+    const draw = state.lastDraw;
+    const ballsWrap = $("#lastdraw-balls");
+    const meta = $("#lastdraw-meta");
+    if (!draw) {
+      ballsWrap.innerHTML = '<span class="empty-note">No last draw yet — press Edit to pick a date from loaded results or enter numbers manually.</span>';
+      meta.textContent = "No last draw set.";
       return;
     }
-    const btn = $("#history-fetch");
-    btn.disabled = true;
-    btn.textContent = "…";
-    try {
-      const res = await fetch(url, { mode: "cors" });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const text = await res.text();
-      addDraws(parseDraws(stripHtml(text), LOTTERIES[state.lotteryId]), "the fetched page");
-    } catch (e) {
-      setHistoryStatus(
-        `Fetching failed (${e.message}). Most lottery sites block direct browser requests (CORS). ` +
-          "Open the results page in a new tab, copy the draw history, and paste it in the box below — or import a downloaded CSV/JSON file.",
-        false
-      );
-    } finally {
-      btn.disabled = false;
-      btn.textContent = "Fetch";
+    const mainBalls = draw.mains.map((n) => `<span class="ball">${n}</span>`).join("");
+    const starBalls = draw.stars && draw.stars.length
+      ? '<span class="star-sep">+</span>' + draw.stars.map((n) => `<span class="ball star">${n}</span>`).join("")
+      : "";
+    ballsWrap.innerHTML = mainBalls + starBalls;
+    const fmt = draw.date
+      ? draw.date.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })
+      : null;
+    if (draw.source === "manual") {
+      meta.textContent = "Entered manually.";
+    } else if (draw.source === "picked") {
+      meta.textContent = `Selected result${fmt ? ` — ${fmt}` : ""}.`;
+    } else {
+      const f = freshnessInfo(LOTTERIES[state.lotteryId]);
+      meta.innerHTML = `Newest result in your history${fmt ? ` — ${fmt}` : ""}.` +
+        (f.stale ? ` <span class="stale">About ${f.missingSince} newer draw${f.missingSince === 1 ? "" : "s"} not loaded yet.</span>` : "");
     }
   }
 
-  /** Turn fetched HTML into line-oriented text so the draw parser can work on it. */
-  function stripHtml(text) {
-    if (!/<[a-z!/]/i.test(text)) return text;
-    const doc = new DOMParser().parseFromString(text, "text/html");
-    for (const el of doc.querySelectorAll("script, style")) el.remove();
-    for (const el of doc.querySelectorAll("tr, li, p, div, h1, h2, h3")) el.append("\n");
-    return doc.body ? doc.body.textContent : text;
+  /** Dated draws from the loaded results, newest first. */
+  function datedHistory() {
+    return state.history[state.lotteryId]
+      .filter((d) => d.date)
+      .slice()
+      .sort((a, b) => b.date.getTime() - a.date.getTime());
+  }
+
+  /** Fill the date dropdown from the loaded results (each option carries the
+      draw's numbers so picking a date loads that exact draw). */
+  function populateLastDrawDates() {
+    const cfg = LOTTERIES[state.lotteryId];
+    const select = $("#lastdraw-date");
+    const dated = datedHistory();
+    select.innerHTML = "";
+    if (!dated.length) {
+      const opt = document.createElement("option");
+      opt.value = "";
+      opt.textContent = "No dated results loaded";
+      select.appendChild(opt);
+      select.disabled = true;
+      $("#lastdraw-date-hint").textContent = "Load results first (Crawl, paste, or import a CSV/JSON), then pick a date here.";
+      return;
+    }
+    select.disabled = false;
+    dated.forEach((d, i) => {
+      const opt = document.createElement("option");
+      opt.value = String(i);
+      const fmt = d.date.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
+      const stars = d.stars && d.stars.length ? "  + " + d.stars.join(" ") : "";
+      opt.textContent = `${fmt}${i === 0 ? "  (latest)" : ""} — ${d.mains.join(" ")}${stars}`;
+      select.appendChild(opt);
+    });
+    select.value = "0";
+    $("#lastdraw-date-hint").textContent = `${dated.length} dated result${dated.length === 1 ? "" : "s"} available — the latest is preselected.`;
+  }
+
+  function setEditorMode(mode) {
+    const history = mode === "history";
+    $("#lastdraw-tab-history").classList.toggle("active", history);
+    $("#lastdraw-tab-manual").classList.toggle("active", !history);
+    $("#lastdraw-pane-history").hidden = !history;
+    $("#lastdraw-pane-manual").hidden = history;
+    if (history) {
+      $("#lastdraw-date").focus();
+    } else {
+      $("#lastdraw-input").focus();
+    }
+  }
+
+  function openLastDrawEditor() {
+    const cfg = LOTTERIES[state.lotteryId];
+    const draw = state.lastDraw;
+    $("#lastdraw-input").value = draw ? draw.mains.join(" ") + (draw.stars && draw.stars.length ? " + " + draw.stars.join(" ") : "") : "";
+    $("#lastdraw-manual-hint").textContent = `Enter ${cfg.mainPick} numbers from 1–${cfg.mainMax}${cfg.starPick ? `, then a + and ${cfg.starPick} star numbers from 1–${cfg.starMax}` : ""}.`;
+    populateLastDrawDates();
+    // Default to the history picker when results are loaded, else manual entry.
+    setEditorMode(datedHistory().length ? "history" : "manual");
+    $("#lastdraw-editor").hidden = false;
+  }
+
+  function saveLastDraw() {
+    const cfg = LOTTERIES[state.lotteryId];
+    const manualMode = !$("#lastdraw-pane-manual").hidden;
+    if (manualMode) {
+      const parsed = parseDrawLine($("#lastdraw-input").value, cfg);
+      if (!parsed) {
+        setHistoryStatus(`That does not look like a valid ${cfg.name} draw — enter ${cfg.mainPick} numbers from 1–${cfg.mainMax}${cfg.starPick ? ` and ${cfg.starPick} star numbers from 1–${cfg.starMax}` : ""}.`, false);
+        return;
+      }
+      state.lastDrawOverride[state.lotteryId] = { mains: parsed.mains, stars: parsed.stars, manual: true };
+    } else {
+      const dated = datedHistory();
+      const idx = parseInt($("#lastdraw-date").value, 10);
+      if (!dated.length || !Number.isInteger(idx) || !dated[idx]) {
+        setHistoryStatus("No dated result selected — load results or switch to manual entry.", false);
+        return;
+      }
+      const d = dated[idx];
+      // Picking the latest reverts to the auto-derived last draw; any older
+      // date is stored as an explicit override (with its date for the label).
+      state.lastDrawOverride[state.lotteryId] = idx === 0
+        ? null
+        : { mains: d.mains.slice(), stars: (d.stars || []).slice(), date: d.date.toISOString().slice(0, 10) };
+    }
+    $("#lastdraw-editor").hidden = true;
+    refreshLastDraw();
+    saveState();
+  }
+
+  function resetLastDraw() {
+    state.lastDrawOverride[state.lotteryId] = null;
+    $("#lastdraw-editor").hidden = true;
+    refreshLastDraw();
+    saveState();
+  }
+
+  /** Keep the two range thumbs ordered, paint the fill, update the summary. */
+  function syncReuseUI() {
+    const cfg = LOTTERIES[state.lotteryId];
+    let lo = intVal("reuse-min", 0);
+    let hi = intVal("reuse-max", 0);
+    if (lo > hi) {
+      // Snap whichever thumb the user is dragging past the other.
+      [lo, hi] = [Math.min(lo, hi), Math.max(lo, hi)];
+      $("#reuse-min").value = lo;
+      $("#reuse-max").value = hi;
+    }
+    const max = cfg.mainPick;
+    const fill = $("#reuse-fill");
+    fill.style.left = (lo / max) * 100 + "%";
+    fill.style.width = ((hi - lo) / max) * 100 + "%";
+    const label = lo === hi ? `exactly <strong>${lo}</strong>` : `<strong>${lo}–${hi}</strong>`;
+    const noun = hi === 1 && lo <= 1 ? "number" : "numbers";
+    $("#reuse-summary").innerHTML = `Carry over ${label} of these ${noun} into each generated row.`;
+    $("#reuse-min").setAttribute("aria-valuetext", `at least ${lo}`);
+    $("#reuse-max").setAttribute("aria-valuetext", `at most ${hi}`);
+    $("#reuse-body").classList.toggle("open", $("#reuse-enabled").checked);
+  }
+
+  /* ---------- automatic collection with fallback chain ---------- */
+
+  function downloadBlob(content, type, filename) {
+    const blob = new Blob([content], { type });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+
+  /** Period the app wants data for: the lookback window (or 10 years), never before launch. */
+  function wantedRange(cfg) {
+    const today = new Date();
+    const years = $("#hist-window").checked ? Math.max(1, intVal("hist-window-years", 5)) : 10;
+    let from = new Date(today.getFullYear() - years, today.getMonth(), today.getDate());
+    const launch = parseIsoDate(cfg.launch);
+    if (launch && from < launch) from = launch;
+    return { from, to: today };
+  }
+
+  function renderSourceStatus(sources, done) {
+    const list = $("#source-status");
+    list.innerHTML = "";
+    for (const src of sources) {
+      const li = document.createElement("li");
+      li.className = `src src-${src.status}`;
+      const icon = { ok: "✓", failed: "✗", empty: "–", skipped: "·", running: "…" }[src.status] || "·";
+      const detail = src.status === "ok"
+        ? `${src.draws} draw${src.draws === 1 ? "" : "s"}${src.windows ? ` from ${src.windows} request${src.windows === 1 ? "" : "s"}` : ""}`
+        : src.note || (src.errors[0] ? src.errors[0] : src.status);
+      li.innerHTML = `<span class="src-icon" aria-hidden="true">${icon}</span><span class="src-label">${escapeHtml(src.label)}</span><span class="src-detail">${escapeHtml(detail)}</span>`;
+      if (src.errors.length > 1) li.title = src.errors.join("\n");
+      list.appendChild(li);
+    }
+    $("#source-status-wrap").hidden = !sources.length;
+    if (done) $("#source-status-wrap").dataset.done = "true";
+  }
+
+  async function fetchHistoryChain() {
+    const cfg = LOTTERIES[state.lotteryId];
+    const id = cfg.id;
+    const btn = $("#history-crawl");
+    btn.disabled = true;
+    const oldLabel = btn.textContent;
+    btn.textContent = "Fetching…";
+    $("#crawl-progress").hidden = false;
+    delete $("#source-status-wrap").dataset.done;
+    $("#source-status").innerHTML = "";
+    const range = wantedRange(cfg);
+    showFetchBanner("running", `Fetching ${cfg.name} results…`, `${isoDateKey(range.from)} → ${isoDateKey(range.to)}, trying Norsk Tipping first, then the fallback sources.`);
+    try {
+      setHistoryStatus(`Fetching ${cfg.name} results ${isoDateKey(range.from)} → ${isoDateKey(range.to)}…`, false);
+      const before = state.history[id].length;
+      const result = await collectHistory(cfg, range, state.history[id], (msg, sources) => {
+        setHistoryStatus(msg, false);
+        renderSourceStatus(sources, false);
+        showFetchBanner("running", `Fetching ${cfg.name} results…`, msg, sources);
+      });
+      state.history[id] = result.draws;
+      const added = result.draws.length - before;
+      state.lastCollect[id] = {
+        at: new Date().toISOString(),
+        from: isoDateKey(range.from),
+        to: isoDateKey(range.to),
+        sources: result.sources.map((x) => ({ id: x.id, label: x.label, status: x.status, draws: x.draws, windows: x.windows, note: x.note, errors: x.errors.slice(0, 5) })),
+        conflicts: result.conflicts.length,
+        missingWeeks: result.coverage.totals.missing,
+        partialWeeks: result.coverage.totals.partial
+      };
+      for (const src of result.sources) {
+        if (src.draws > 0) state.provenance[id].push({ kind: src.id, label: src.label, count: src.draws, at: new Date().toISOString() });
+      }
+      state.provenance[id] = state.provenance[id].slice(-8);
+      renderSourceStatus(result.sources, true);
+      const t = result.coverage.totals;
+      const okSources = result.sources.filter((x) => x.status === "ok").map((x) => x.label);
+      refreshHistoryStatus(
+        `Fetched ${added} new draw${added === 1 ? "" : "s"} ` +
+          (okSources.length ? `from ${okSources.join(" + ")}. ` : "— no source answered. ") +
+          `${t.complete} of ${t.complete + t.partial + t.missing} weeks complete` +
+          (t.missing || t.partial ? ` (${t.missing} missing, ${t.partial} partial)` : "") +
+          (result.conflicts.length ? ` · ${result.conflicts.length} conflicting draw${result.conflicts.length === 1 ? "" : "s"} kept from the earlier source` : "") + "."
+      );
+      renderStats();
+      refreshLastDraw();
+      renderProvenance();
+      renderCoverage();
+      renderFreshness();
+      updatePanelCounts();
+      scheduleStrictness();
+      saveState();
+      const newest = newestHistoryDraw();
+      const newestTxt = newest ? newest.date.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }) : "none";
+      if (!okSources.length) {
+        showFetchBanner("error", "No source could deliver results",
+          result.sources.map((s) => `${s.label}: ${s.note || (s.errors[0] || s.status)}`).join(" · ") + ". Paste draws or import a CSV in the Historical draws panel.", result.sources, true);
+      } else if (t.missing || t.partial) {
+        showFetchBanner("warn", `Fetched ${added} new draw${added === 1 ? "" : "s"} — ${t.missing + t.partial} week${t.missing + t.partial === 1 ? "" : "s"} still incomplete`,
+          `From ${okSources.join(" + ")}. Newest draw now ${newestTxt}. The data basis panel below shows which weeks are missing.`, result.sources, true);
+      } else {
+        showFetchBanner("ok", added ? `Fetched ${added} new draw${added === 1 ? "" : "s"}` : "Already up to date",
+          `From ${okSources.join(" + ")}. Newest draw ${newestTxt}; every week in your lookback window is complete.`, result.sources, true);
+      }
+    } catch (e) {
+      setHistoryStatus(`Fetching failed unexpectedly (${e.message}). Paste draws or import a CSV/JSON file instead.`, false);
+      showFetchBanner("error", "Fetching failed", e.message, null, true);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = oldLabel;
+      $("#crawl-progress").hidden = true;
+    }
+  }
+
+  function showFetchBanner(stateName, title, detail, sources, done) {
+    const b = $("#fetch-banner");
+    b.hidden = false;
+    b.dataset.state = stateName;
+    b.querySelector(".fetch-banner-icon").textContent = { running: "⤓", ok: "✓", warn: "⚠", error: "✗" }[stateName] || "⤓";
+    $("#fetch-banner-title").textContent = title;
+    $("#fetch-banner-detail").textContent = detail || "";
+    $("#fetch-banner-progress").hidden = stateName !== "running";
+    $("#fetch-banner-close").hidden = !done;
+    $("#fetch-banner-details").hidden = !done;
+    const list = $("#fetch-banner-sources");
+    if (sources && sources.length) {
+      list.hidden = false;
+      list.innerHTML = "";
+      for (const src of sources) {
+        const li = document.createElement("li");
+        li.className = `src src-${src.status}`;
+        const icon = { ok: "✓", failed: "✗", empty: "–", skipped: "·", running: "…" }[src.status] || "·";
+        const d = src.status === "ok" ? `${src.draws} draw${src.draws === 1 ? "" : "s"}` : src.status === "running" ? "trying…" : (src.note || src.errors[0] || src.status);
+        li.innerHTML = `<span class="src-icon" aria-hidden="true">${icon}</span><span class="src-label">${escapeHtml(src.label)}</span><span class="src-detail">${escapeHtml(d)}</span>`;
+        list.appendChild(li);
+      }
+    } else {
+      list.hidden = true;
+    }
+  }
+
+  /** How stale the loaded history is for the active lottery. */
+  function freshnessInfo(cfg) {
+    const newest = newestHistoryDraw();
+    const today = new Date();
+    if (!newest) return { newest: null, missingSince: 0, stale: false, empty: true };
+    const missingSince = drawsExpectedBetween(cfg, newest.date, today);
+    const weeksOld = Math.floor((today - newest.date) / (7 * 86400000));
+    return { newest: newest.date, missingSince, weeksOld, stale: missingSince > 0, empty: false };
+  }
+
+  function renderFreshness() {
+    const cfg = LOTTERIES[state.lotteryId];
+    const f = freshnessInfo(cfg);
+    const el = $("#freshness-banner");
+    const btn = $("#freshness-fetch");
+    if (f.empty) {
+      el.hidden = false;
+      el.dataset.level = "empty";
+      $("#freshness-text").innerHTML = `<strong>No ${cfg.name} results loaded yet.</strong> Fetch them to use exclusions, statistics and the last-draw features.`;
+      btn.textContent = "⤓ Fetch results";
+      return;
+    }
+    if (!f.stale) {
+      el.hidden = true;
+      return;
+    }
+    el.hidden = false;
+    el.dataset.level = "stale";
+    const fmt = f.newest.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
+    $("#freshness-text").innerHTML = `<strong>Results are ${f.weeksOld} week${f.weeksOld === 1 ? "" : "s"} old.</strong> Newest loaded draw is ${fmt}; about ${f.missingSince} draw${f.missingSince === 1 ? "" : "s"} since then ${f.missingSince === 1 ? "is" : "are"} not loaded, so exclusions and statistics cannot see them.`;
+    btn.textContent = "⤓ Fetch newer results";
+  }
+
+  /** On open: fetch automatically when data is missing or stale (at most every 6 h). */
+  function maybeAutoUpdate() {
+    if (!$("#auto-update").checked) return;
+    const cfg = LOTTERIES[state.lotteryId];
+    const f = freshnessInfo(cfg);
+    if (!f.empty && !f.stale) return;
+    const lc = state.lastCollect[cfg.id];
+    if (lc && Date.now() - new Date(lc.at).getTime() < 6 * 3600 * 1000) return;
+    fetchHistoryChain();
+  }
+
+  function downloadDataset() {
+    const cfg = LOTTERIES[state.lotteryId];
+    const draws = state.history[cfg.id];
+    if (!draws.length) {
+      showToast("No draws loaded yet.");
+      return;
+    }
+    downloadBlob(buildResultsCsv(draws, cfg), "text/csv", cfg.data.csvName);
+    showToast(`Downloaded ${cfg.data.csvName} (${draws.length} draws).`);
+  }
+
+  /* ---------- coverage: which years and weeks are fetched and used ---------- */
+
+  function fmtWeek(year, week) {
+    return `${year}-W${String(week).padStart(2, "0")}`;
+  }
+
+  function renderCoverage() {
+    const cfg = LOTTERIES[state.lotteryId];
+    const all = state.history[cfg.id];
+    const card = $("#coverage-card");
+    if (!all.length) {
+      card.hidden = true;
+      return;
+    }
+    card.hidden = false;
+    const today = new Date();
+    const active = activeDraws();
+    const usedKeys = new Set(active.filter((d) => d.date).map((d) => isoDateKey(d.date)));
+    const windowOn = $("#hist-window").checked;
+    const years = intVal("hist-window-years", 5);
+    const windowStart = windowOn ? new Date(today.getFullYear() - years, today.getMonth(), today.getDate()) : null;
+    const dated = all.filter((d) => d.date).map((d) => d.date);
+    const earliest = dated.length ? new Date(Math.min(...dated)) : today;
+    let from = windowStart && windowStart < earliest ? windowStart : earliest;
+    if (!windowOn) from = earliest;
+    const launch = parseIsoDate(cfg.launch);
+    if (launch && from < launch) from = launch;
+    const cov = coverageByWeek(all, cfg, from, today, usedKeys);
+    const t = cov.totals;
+
+    // Summary: what the generator actually uses.
+    const usedDates = active.filter((d) => d.date).map((d) => d.date);
+    const uMin = usedDates.length ? new Date(Math.min(...usedDates)) : null;
+    const uMax = usedDates.length ? new Date(Math.max(...usedDates)) : null;
+    const wk = (d) => { const w = isoWeekOf(d); return fmtWeek(w.year, w.week); };
+    const inWindowWeeks = cov.years.flatMap((y) => y.weeks).filter((w) => !windowStart || w.start >= new Date(windowStart.getFullYear(), windowStart.getMonth(), windowStart.getDate() - 6));
+    const gapsInWindow = inWindowWeeks.filter((w) => w.status === "missing" || w.status === "partial");
+    const summary = [];
+    summary.push(`<strong>${active.length}</strong> draw${active.length === 1 ? "" : "s"} in <strong>${t.usedWeeks}</strong> week${t.usedWeeks === 1 ? "" : "s"} are used for your rows` +
+      (uMin ? ` — ${wk(uMin)} to ${wk(uMax)}` : "") +
+      (windowOn ? ` (lookback ${years} year${years === 1 ? "" : "s"})` : " (no lookback limit)") + ".");
+    if (gapsInWindow.length) {
+      summary.push(`<span class="cov-warn">⚠ ${gapsInWindow.length} week${gapsInWindow.length === 1 ? "" : "s"} in that window ${gapsInWindow.length === 1 ? "is" : "are"} missing or incomplete</span> — exclusions and statistics cannot see those draws.`);
+    } else {
+      summary.push(`<span class="cov-ok">✓ every week in that window is complete</span>.`);
+    }
+    const srcParts = Object.entries(t.bySource).sort((a, b) => b[1] - a[1]).map(([k, n]) => `${sourceLabel(k)}: ${n} week${n === 1 ? "" : "s"}`);
+    if (srcParts.length) summary.push(`Sources — ${srcParts.join(" · ")}.`);
+    const lc = state.lastCollect[cfg.id];
+    if (lc) summary.push(`Last automatic fetch ${new Date(lc.at).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" })} for ${lc.from} → ${lc.to}.`);
+    $("#coverage-summary").innerHTML = summary.map((x) => `<p>${x}</p>`).join("");
+
+    // Grid: one row per ISO year, one cell per week.
+    const grid = $("#coverage-grid");
+    grid.innerHTML = "";
+    for (const y of cov.years.slice().reverse()) {
+      const row = document.createElement("div");
+      row.className = "cov-row";
+      const complete = y.weeks.filter((w) => w.status === "complete").length;
+      const relevant = y.weeks.filter((w) => w.status !== "future" && w.status !== "pending" && w.status !== "before-launch").length;
+      const used = y.weeks.filter((w) => w.used > 0).length;
+      row.setAttribute("role", "img");
+      row.setAttribute("aria-label", `${y.year}: ${complete} of ${relevant} weeks complete, ${used} weeks used for your rows`);
+      const label = document.createElement("span");
+      label.className = "cov-year";
+      label.textContent = y.year;
+      row.appendChild(label);
+      const cells = document.createElement("span");
+      cells.className = "cov-cells";
+      // pad so week numbers line up across years
+      const firstWeek = y.weeks.length ? y.weeks[0].week : 1;
+      for (let i = 1; i < firstWeek; i++) {
+        const pad = document.createElement("i");
+        pad.className = "cov-cell cov-pad";
+        cells.appendChild(pad);
+      }
+      for (const w of y.weeks) {
+        const c = document.createElement("i");
+        c.className = `cov-cell cov-${w.status}${w.used ? " cov-used" : ""}`;
+        const startTxt = w.start.toLocaleDateString("en-GB", { day: "2-digit", month: "short" });
+        const srcTxt = w.sources.length ? w.sources.map((k) => sourceLabel(k)).join(", ") : "";
+        const launchDate = parseIsoDate(cfg.launch);
+        const statusTxt = w.status === "future" ? "future"
+          : w.status === "pending" ? `${w.fetched} fetched so far — draw day not passed yet`
+          : w.status === "before-launch" ? (launchDate && w.start < launchDate ? "before launch" : "no draw day inside the range")
+          : `${w.fetched} of ${w.expected} draw${w.expected === 1 ? "" : "s"} fetched`;
+        c.title = `${fmtWeek(y.year, w.week)} (from ${startTxt}) · ${statusTxt}` +
+          (srcTxt ? ` · ${srcTxt}` : "") + (w.used ? " · used for your rows" : w.fetched ? " · outside lookback window" : "");
+        cells.appendChild(c);
+      }
+      row.appendChild(cells);
+      grid.appendChild(row);
+    }
+
+    // Missing weeks list (most recent first), limited.
+    const missing = cov.years.flatMap((y) => y.weeks.filter((w) => w.status === "missing" || w.status === "partial").map((w) => ({ y: y.year, w })))
+      .sort((a, b) => b.w.start - a.w.start);
+    const ml = $("#coverage-missing");
+    if (!missing.length) {
+      ml.hidden = true;
+    } else {
+      ml.hidden = false;
+      const shown = missing.slice(0, 12).map((m) => `${fmtWeek(m.y, m.w.week)}${m.w.status === "partial" ? ` (${m.w.fetched}/${m.w.expected})` : ""}`);
+      ml.innerHTML = `<strong>${missing.length} incomplete week${missing.length === 1 ? "" : "s"}:</strong> ${shown.join(", ")}${missing.length > 12 ? ", …" : ""}. ` +
+        `Fetch again later, or paste the missing draws from norsk-tipping.no.`;
+    }
   }
 
   function loadDemoData() {
@@ -278,10 +979,11 @@
       draws.push({
         date,
         mains: sampleDistinct(pool, cfg.mainPick),
-        stars: cfg.starPick > 0 ? sampleDistinct(starPool, cfg.starPick) : []
+        stars: cfg.starPick > 0 ? sampleDistinct(starPool, cfg.starPick) : [],
+        source: "demo"
       });
     }
-    addDraws(draws, "demo data (synthetic — not real results)");
+    addDraws(draws, "demo data (synthetic — not real results)", "demo");
   }
 
   /* ---------- stats ---------- */
@@ -303,9 +1005,19 @@
     for (let n = 1; n <= cfg.mainMax; n++) {
       const bar = document.createElement("div");
       bar.className = "freq-bar";
+      bar.setAttribute("aria-hidden", "true");
       bar.style.height = `${Math.round((freq[n] / maxFreq) * 100)}%`;
       bar.dataset.tip = `${n}: ${freq[n]}×`;
       chart.appendChild(bar);
+    }
+    const gapsAll = drawsSinceLastSeen(draws, cfg);
+    const tbody = $("#freq-table tbody");
+    tbody.innerHTML = "";
+    for (let n = 1; n <= cfg.mainMax; n++) {
+      const tr = document.createElement("tr");
+      const seen = gapsAll[n] >= draws.length ? "never" : String(gapsAll[n]);
+      tr.innerHTML = `<td>${n}</td><td>${freq[n]}</td><td>${seen}</td>`;
+      tbody.appendChild(tr);
     }
     const ranked = [];
     for (let n = 1; n <= cfg.mainMax; n++) ranked.push([n, freq[n]]);
@@ -313,37 +1025,226 @@
     const fmtList = (pairs) => pairs.map(([n, f]) => `${n} (${f}×)`).join(", ");
     $("#hot-numbers").textContent = fmtList(ranked.slice(0, 5));
     $("#cold-numbers").textContent = fmtList(ranked.slice(-5).reverse());
+    state.hotNumbers = ranked.slice(0, 5).map(([n]) => n);
+    chart.setAttribute(
+      "aria-label",
+      `Bar chart of how often each number 1 to ${cfg.mainMax} was drawn. Most drawn: ${fmtList(ranked.slice(0, 5))}. ` +
+        `Least drawn: ${fmtList(ranked.slice(-5).reverse())}. Full values are in the table that follows.`
+    );
+    if (draws.length < 50) {
+      $("#stats-hint").textContent += ` With only ${draws.length} draws, these differences are mostly noise.`;
+    }
+    const gaps = drawsSinceLastSeen(draws, cfg);
+    const overdue = [];
+    for (let n = 1; n <= cfg.mainMax; n++) overdue.push([n, gaps[n]]);
+    overdue.sort((a, b) => b[1] - a[1]);
+    $("#overdue-numbers").textContent = overdue
+      .slice(0, 5)
+      .map(([n, g]) => `${n} (${g >= draws.length ? "never" : g + " draws ago"})`)
+      .join(", ");
   }
 
   /* ---------- generation & rendering ---------- */
 
+  /* ---------- sampling bias (sliders) ----------
+     Slider 0-100 maps to a weight multiplier of up to 9x for the most
+     overdue / least-drawn number, scaling linearly down to 1x for numbers
+     with no claim to a boost. Both biases multiply together. */
+
+  const MAX_BIAS_MULTIPLIER = 8; // 0-100 % -> extra weight 0..8 on top of 1
+
+  function computeBiasWeights(cfg) {
+    const overdueOn = $("#bias-overdue").checked && intVal("bias-overdue-strength", 0) > 0;
+    const coldOn = $("#bias-cold").checked && intVal("bias-cold-strength", 0) > 0;
+    const halfVal = $("#bias-half").checked ? intVal("bias-half-value", 0) : 0;
+    const halfW = halfWeights(cfg, halfVal);
+    if (!overdueOn && !coldOn) return { weights: halfW, warnings: [] };
+
+    const all = state.history[state.lotteryId];
+    if (!all.length) {
+      return {
+        weights: halfW,
+        warnings: ["The overdue/rarely-picked sliders are active, but no historical draws are loaded — they have no effect yet."]
+      };
+    }
+
+    const warnings = [];
+    const weights = new Array(cfg.mainMax + 1).fill(1);
+    if (halfW) for (let n = 1; n <= cfg.mainMax; n++) weights[n] *= halfW[n];
+
+    if (overdueOn) {
+      const gaps = drawsSinceLastSeen(activeDraws(), cfg);
+      const maxGap = Math.max(1, ...gaps.slice(1));
+      const k = (intVal("bias-overdue-strength", 0) / 100) * MAX_BIAS_MULTIPLIER;
+      for (let n = 1; n <= cfg.mainMax; n++) {
+        weights[n] *= 1 + k * (gaps[n] / maxGap);
+      }
+    }
+
+    if (coldOn) {
+      const periodDraws = filterDrawsByYears(all, intVal("bias-cold-years", 2));
+      if (!periodDraws.length) {
+        warnings.push("Rarely-picked slider: no loaded draws fall within the chosen period, so it has no effect.");
+      } else {
+        const freq = numberFrequencies(periodDraws, cfg);
+        const maxF = Math.max(...freq.slice(1));
+        const minF = Math.min(...freq.slice(1));
+        const span = Math.max(1, maxF - minF);
+        const k = (intVal("bias-cold-strength", 0) / 100) * MAX_BIAS_MULTIPLIER;
+        for (let n = 1; n <= cfg.mainMax; n++) {
+          weights[n] *= 1 + k * ((maxF - freq[n]) / span);
+        }
+      }
+    }
+
+    return { weights, warnings };
+  }
+
+  function renderEmptyState() {
+    const cfg = LOTTERIES[state.lotteryId];
+    $("#tickets").innerHTML = `
+      <div class="empty-state">
+        <div class="empty-balls" aria-hidden="true">
+          <span class="ball demo">7</span><span class="ball demo">12</span><span class="ball demo">23</span><span class="ball demo">31</span>
+        </div>
+        <h3>Ready when you are</h3>
+        <p>Pick a style under <strong>Quick setup</strong> — or just generate. You get ${cfg.name} rows that follow your rules;
+        lock the ones you like and reroll the rest.</p>
+        <button type="button" class="btn primary btn-lg" id="btn-generate-empty">⟳ Generate my rows</button>
+      </div>`;
+    $("#btn-generate-empty").addEventListener("click", generate);
+  }
+
   function clearTickets() {
     state.tickets = [];
-    $("#tickets").innerHTML =
-      '<div class="empty-state"><p>Press <strong>Generate 10 rows</strong> to pick your numbers.</p></div>';
+    state.generatedFor = null;
+    renderEmptyState();
     $("#warnings").hidden = true;
+    $("#diagnosis").hidden = true;
+    $("#summary-bar").hidden = true;
     for (const id of ["btn-copy", "btn-csv", "btn-print"]) $("#" + id).disabled = true;
+  }
+
+  function buildContext(cfg) {
+    const criteria = readCriteria(cfg);
+    const subsetSize = criteria.historySubset.enabled ? intVal("hist-subset-size", 4) : 0;
+    const historyIndex = buildHistoryIndex(activeDraws(), subsetSize);
+    const bias = computeBiasWeights(cfg);
+    return { criteria, historyIndex, bias };
   }
 
   function generate() {
     const cfg = LOTTERIES[state.lotteryId];
-    const criteria = readCriteria(cfg);
-    const subsetSize = criteria.historySubset.enabled ? intVal("hist-subset-size", 4) : 0;
-    const historyIndex = buildHistoryIndex(activeDraws(), subsetSize);
+    const { criteria, historyIndex, bias } = buildContext(cfg);
 
-    if ((criteria.historyExact.enabled || criteria.historySubset.enabled) && historyIndex.drawCount === 0) {
-      showWarnings(["History-based exclusions are on, but no historical draws are loaded for this lottery — they have no effect yet."], false);
-    } else {
-      $("#warnings").hidden = true;
+    const preWarnings = [];
+    // Only nag about missing history when the user opted into a history rule
+    // beyond the default "never repeat a full past row".
+    if (criteria.historySubset.enabled && historyIndex.drawCount === 0) {
+      preWarnings.push("History-based exclusions are on, but no historical draws are loaded for this lottery — they have no effect yet.");
+    }
+    preWarnings.push(...bias.warnings);
+    if ($("#reuse-enabled").checked && !state.lastDraw) {
+      preWarnings.push(`Reuse from last draw is on, but no last draw is set for ${cfg.name} — it was skipped. Press Edit on the Last draw card to set one.`);
     }
 
-    const { tickets, warnings } = generateTickets(10, cfg, criteria, historyIndex);
-    state.tickets = tickets;
+    // Locked rows stay in their slots; the rest are generated around them.
+    const count = rowCount();
+    const previous = state.generatedFor === cfg.id ? state.tickets : [];
+    const slots = new Array(count).fill(null);
+    const overflow = [];
+    previous.forEach((t, i) => {
+      if (!t.locked) return;
+      if (i < count) slots[i] = t;
+      else overflow.push(t);
+    });
+    for (const t of overflow) {
+      const free = slots.indexOf(null);
+      if (free === -1) slots.push(t);
+      else slots[free] = t;
+    }
+    const lockedRows = slots.filter(Boolean);
+    const need = slots.filter((x) => x === null).length;
+
+    const { tickets, warnings, diagnosis } = generateTickets(need, cfg, criteria, historyIndex, bias.weights, lockedRows.map((t) => t.mains));
+    let k = 0;
+    const result = slots.map((t) => t || tickets[k++] || null).filter(Boolean);
+    state.tickets = result;
     state.generatedFor = cfg.id;
 
-    if (warnings.length) showWarnings(warnings, tickets.length === 0);
+    const allWarnings = preWarnings.concat(warnings);
+    if (allWarnings.length) showWarnings(allWarnings, result.length === 0);
+    else $("#warnings").hidden = true;
     renderTickets(cfg);
+    renderDiagnosis(diagnosis, result.length > 0);
+    if (tickets.length) announce(`${result.length} row${result.length === 1 ? "" : "s"} ready${lockedRows.length ? `, ${lockedRows.length} kept locked` : ""}.`);
     saveState();
+  }
+
+  function rerollRow(i) {
+    const cfg = LOTTERIES[state.lotteryId];
+    const { criteria, historyIndex, bias } = buildContext(cfg);
+    const others = state.tickets.filter((_, j) => j !== i).map((t) => t.mains);
+    const { tickets, warnings } = generateTickets(1, cfg, criteria, historyIndex, bias.weights, others);
+    if (!tickets.length) {
+      showToast(warnings[0] || "Could not find another row that fits your rules.");
+      return;
+    }
+    state.tickets[i] = tickets[0];
+    renderTickets(cfg);
+    focusRowAction(i, "reroll");
+    announce(`Row ${i + 1} rerolled${tickets[0].relaxed ? " (some style rules relaxed)" : ""}.`);
+    saveState();
+  }
+
+  function toggleLock(i) {
+    const t = state.tickets[i];
+    t.locked = !t.locked;
+    renderTickets(LOTTERIES[state.lotteryId]);
+    focusRowAction(i, "lock");
+    announce(`Row ${i + 1} ${t.locked ? "locked — it stays when you generate again" : "unlocked"}.`);
+    saveState();
+  }
+
+  async function copyRow(i) {
+    const t = state.tickets[i];
+    const text = t.mains.join(" ") + (t.stars.length ? " + " + t.stars.join(" ") : "");
+    try {
+      await navigator.clipboard.writeText(text);
+      showToast(`Row ${i + 1} copied: ${text}`);
+    } catch (e) {
+      showToast("Copy failed — your browser blocked clipboard access.");
+    }
+  }
+
+  function focusRowAction(i, action) {
+    const btn = document.querySelector(`.ticket[data-row="${i}"] [data-action="${action}"]`);
+    if (btn) btn.focus();
+  }
+
+  function renderDiagnosis(d, produced) {
+    const box = $("#diagnosis");
+    if (!d || !d.tested) { box.hidden = true; return; }
+    box.hidden = false;
+    $("#diag-title").textContent = produced ? `Why row ${d.failedRow} could not be found` : "Why no row could be found";
+    const hard = d.rules.filter((r) => r.kind === "hard");
+    const main = (hard.length ? hard : d.rules)[0];
+    const pass = d.passAll;
+    $("#diag-sum").innerHTML = `Of <b>${fmtInt(d.tested)}</b> candidate rows, only <b>${fmtPct(pass)}</b> pass every rule` +
+      (main ? ` — the biggest blocker is <b>${escapeHtml(main.name)}</b>, which rejects <b>${fmtPct(main.share)}</b>` : "") + `. Hard rules cannot be relaxed, so the generator gave up after ${fmtInt(MAX_ATTEMPTS_PER_ROW)} attempts.`;
+    const list = $("#diag-rules");
+    list.innerHTML = "";
+    d.rules.forEach((r) => {
+      const row = document.createElement("div");
+      row.className = `diag-row${r === main ? " main" : ""}`;
+      const boxId = HIST_RULE_BOX[r.id];
+      row.innerHTML = `<div class="diag-name"><strong>${escapeHtml(r.name)}<span class="diag-tag ${r.kind}">${r.kind === "hard" ? "HARD" : "STYLE"}</span></strong><span>${escapeHtml(r.label)}</span></div>` +
+        `<div class="diag-bar" role="img" aria-label="${escapeHtml(r.name)} rejects ${fmtPct(r.share)} of candidate rows"><i style="width:${Math.max(0.4, r.share * 100).toFixed(2)}%"></i>${r.sole > 0 ? `<i class="sole" style="left:${(r.sole * 100).toFixed(2)}%" title="rejected by this rule only: ${fmtPct(r.sole)}"></i>` : ""}</div>` +
+        `<div class="diag-val"><strong>rejects ${escapeHtml(fmtPct(r.share))}</strong><span>only this rule: ${escapeHtml(fmtPct(r.sole))}</span></div>` +
+        (boxId ? `<div class="diag-actions"><button type="button" class="btn small" data-off="${r.id}">Switch off &amp; regenerate</button><button type="button" class="btn small ghost" data-edit="${r.id}">Edit setting</button>${r.id === "historySubset" ? "<span>Tip: a smaller group size or a shorter lookback window blocks fewer rows.</span>" : ""}</div>` : "");
+      list.appendChild(row);
+    });
+    box.scrollIntoView({ block: "nearest" });
   }
 
   function showWarnings(messages, isError) {
@@ -361,23 +1262,83 @@
     const wrap = $("#tickets");
     wrap.innerHTML = "";
     if (!state.tickets.length) {
-      wrap.innerHTML = '<div class="empty-state"><p>No rows could be generated — loosen the criteria and try again.</p></div>';
+      wrap.innerHTML = '<div class="empty-state"><h3>No rows fit these rules</h3><p>Loosen a rule — the Rule strictness gauge under Quick setup shows how tight your settings are.</p></div>';
       for (const id of ["btn-copy", "btn-csv", "btn-print"]) $("#" + id).disabled = true;
+      $("#summary-bar").hidden = true;
       return;
     }
+    // Highlight numbers carried over from the last draw only when reuse is on.
+    const highlight = $("#reuse-enabled").checked ? state.lastDrawSet : new Set();
     state.tickets.forEach((t, i) => {
       const card = document.createElement("div");
-      card.className = "ticket";
+      card.className = "ticket" + (t.locked ? " locked" : "");
+      card.dataset.row = String(i);
+      card.setAttribute("role", "group");
+      card.setAttribute("aria-label", `Row ${i + 1}`);
       card.style.setProperty("--i", i);
-      const balls = t.mains.map((n) => `<span class="ball">${n}</span>`).join("");
+      const balls = t.mains
+        .map((n) => highlight.has(n)
+          ? `<span class="ball carried" title="Carried over from the last draw">${n}<span class="sr-only"> (from last draw)</span></span>`
+          : `<span class="ball">${n}</span>`)
+        .join("");
       const stars = t.stars.length
-        ? `<span class="star-sep">+</span>` + t.stars.map((n) => `<span class="ball star">${n}</span>`).join("")
+        ? `<span class="star-sep" aria-hidden="true">+</span><span class="sr-only">star numbers</span>` +
+          t.stars.map((n) => `<span class="ball star">${n}</span>`).join("")
         : "";
-      const flag = t.relaxed ? '<span class="ticket-flag" title="Style criteria were relaxed for this row">relaxed</span>' : "";
-      card.innerHTML = `<span class="ticket-no">#${i + 1}</span><span class="ticket-balls">${balls}${stars}</span>${flag}`;
+      const carried = highlight.size ? t.mains.filter((n) => highlight.has(n)).length : 0;
+      const badges = [];
+      if (carried) badges.push(`<span class="ticket-flag">★ ${carried} from last draw</span>`);
+      if (t.relaxed) badges.push('<span class="ticket-flag warn">⚠ relaxed</span>');
+      const note = t.relaxed && t.relaxedRules && t.relaxedRules.length
+        ? `<div class="ticket-note">Relaxed to fit your exclusions: ${escapeHtml(t.relaxedRules.join(", "))}</div>`
+        : "";
+      card.innerHTML =
+        `<span class="ticket-no">#${i + 1}</span>` +
+        `<span class="ticket-balls">${balls}${stars}</span>` +
+        `<span class="ticket-badges">${badges.join("")}</span>` +
+        `<span class="ticket-actions">` +
+        `<button type="button" class="icon-btn" data-action="lock" aria-pressed="${t.locked ? "true" : "false"}" aria-label="${t.locked ? "Unlock" : "Lock"} row ${i + 1}" title="${t.locked ? "Unlock row" : "Lock row — keep it when generating again"}">${t.locked ? "🔒" : "🔓"}</button>` +
+        `<button type="button" class="icon-btn" data-action="reroll" aria-label="Reroll row ${i + 1}" title="Reroll just this row"${t.locked ? " disabled" : ""}>↻</button>` +
+        `<button type="button" class="icon-btn" data-action="copy" aria-label="Copy row ${i + 1}" title="Copy this row">⧉</button>` +
+        `</span>` +
+        note;
       wrap.appendChild(card);
     });
     for (const id of ["btn-copy", "btn-csv", "btn-print"]) $("#" + id).disabled = false;
+    renderSummary(cfg);
+  }
+
+  function renderSummary(cfg) {
+    const bar = $("#summary-bar");
+    const rows = state.tickets.length;
+    if (!rows) {
+      bar.hidden = true;
+      return;
+    }
+    bar.hidden = false;
+    const locked = state.tickets.filter((t) => t.locked).length;
+    const relaxed = state.tickets.filter((t) => t.relaxed).length;
+    const parts = [`<span class="stat"><strong>${rows}</strong> row${rows === 1 ? "" : "s"}</span>`];
+    if (locked) parts.push(`<span class="stat">🔒 <strong>${locked}</strong> locked</span>`);
+    parts.push(relaxed
+      ? `<button type="button" class="stat-warn" id="summary-relaxed">⚠ ${relaxed} relaxed — why?</button>`
+      : '<span class="stat">✓ all rows follow your rules</span>');
+    const basis = activeDraws().length;
+    if (basis) parts.push(`<a class="stat stat-link" href="#coverage-card">📅 based on ${basis} past draws</a>`);
+    $("#summary-stats").innerHTML = parts.join("");
+    const relaxedBtn = $("#summary-relaxed");
+    if (relaxedBtn) {
+      relaxedBtn.addEventListener("click", () => {
+        const first = document.querySelector(".ticket .ticket-note");
+        const w = $("#warnings");
+        if (!w.hidden) w.scrollIntoView({ block: "center" });
+        else if (first) first.scrollIntoView({ block: "center" });
+      });
+    }
+    const price = state.rowPrice[cfg.id];
+    const total = rows * price;
+    const kr = (v) => v.toLocaleString("nb-NO", { maximumFractionDigits: 2 });
+    $("#summary-cost").textContent = `Coupon: ${rows} × ${kr(price)} kr = ${kr(total)} kr`;
   }
 
   function ticketsAsText() {
@@ -394,6 +1355,7 @@
     try {
       await navigator.clipboard.writeText(ticketsAsText());
       flashButton($("#btn-copy"), "Copied ✓");
+      showToast(`Copied ${state.tickets.length} rows to the clipboard.`);
     } catch (e) {
       flashButton($("#btn-copy"), "Copy failed");
     }
@@ -417,6 +1379,794 @@
     a.download = `${cfg.id}-rows-${new Date().toISOString().slice(0, 10)}.csv`;
     a.click();
     URL.revokeObjectURL(a.href);
+    showToast(`Downloaded ${a.download}.`);
+  }
+
+  /* ---------- toast + live announcements ---------- */
+
+  let toastTimer = null;
+  function showToast(message, actionLabel, action) {
+    const el = $("#toast");
+    $("#toast-text").textContent = message;
+    const btn = $("#toast-action");
+    btn.hidden = !actionLabel;
+    btn.onclick = null;
+    if (actionLabel) {
+      btn.textContent = actionLabel;
+      btn.onclick = () => {
+        el.hidden = true;
+        action();
+      };
+    }
+    el.hidden = false;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => (el.hidden = true), actionLabel ? 8000 : 3500);
+  }
+
+  /** Screen-reader announcement without a visible toast. */
+  function announce(message) {
+    const el = $("#sr-announcer");
+    el.textContent = "";
+    // A fresh text node after a tick makes repeated messages re-announce.
+    setTimeout(() => (el.textContent = message), 50);
+  }
+
+  /* ---------- presets ---------- */
+
+  // Each preset sets the style rules only — never your excluded/required
+  // numbers, history or last-draw settings.
+  const PRESETS = {
+    balanced: {
+      label: "Balanced",
+      desc: "A natural-looking spread: no long runs, a mix of odd/even and low/high, typical sums, and no obvious patterns.",
+      apply: (cfg) => ({
+        "crit-maxrun": true, "crit-maxrun-value": 2,
+        "crit-oddeven": true, "crit-oddeven-min": cfg.mainPick === 7 ? 2 : 1, "crit-oddeven-max": cfg.mainPick === 7 ? 5 : 4,
+        "crit-sum": true, "crit-sum-min": cfg.defaultSumMin, "crit-sum-max": cfg.defaultSumMax,
+        "crit-zone": true, "crit-zone-max": 3, "crit-zone-min": 0,
+        "crit-parity": true, "crit-parity-value": 3,
+        "crit-arith": true, "crit-arith-value": 3,
+        "ap-lastdigit": true, "ap-lastdigit-max": 3,
+        "ap-multiple": true, "ap-multiple-max": 4,
+        "ap-lowhigh": true, "ap-lowhigh-low": 1, "ap-lowhigh-high": 1,
+        "crit-birthday": false, "bias-overdue": false, "bias-cold": false, "bias-half": false,
+        "crit-overlap": true, "crit-overlap-max": cfg.mainPick === 7 ? 4 : 3
+      })
+    },
+    contrarian: {
+      label: "Contrarian",
+      desc: "Steers away from the combinations crowds love — dates, runs and neat patterns — so a win is less likely to be shared. Same odds, fewer co-winners.",
+      apply: (cfg) => ({
+        ...PRESETS.balanced.apply(cfg),
+        "crit-birthday": true,
+        "ap-lastdigit-max": 2,
+        "ap-multiple-max": 3,
+        "ap-lowhigh-low": 2, "ap-lowhigh-high": 2
+      })
+    },
+    weighted: {
+      label: "Overdue & rare",
+      desc: "Balanced rules plus a boost for numbers that haven't come up lately or rarely do. Needs loaded results. A style choice — it doesn't change the odds.",
+      apply: (cfg) => ({
+        ...PRESETS.balanced.apply(cfg),
+        "bias-overdue": true, "bias-overdue-strength": 60,
+        "bias-cold": true, "bias-cold-strength": 50
+      })
+    },
+    random: {
+      label: "Pure random",
+      desc: "No style rules at all — every combination is equally likely, like Norsk Tipping's own quick pick. Rows are still never duplicated.",
+      apply: () => ({
+        "crit-maxrun": false, "crit-oddeven": false, "crit-sum": false, "crit-zone": false, "crit-zonesused": false,
+        "crit-parity": false, "crit-arith": false, "ap-lastdigit": false, "ap-multiple": false,
+        "ap-lowhigh": false, "crit-birthday": false, "bias-overdue": false, "bias-cold": false, "bias-half": false,
+        "crit-overlap": false
+      })
+    },
+    history: {
+      label: "Best guess",
+      desc: "Rules and filters set from how all your loaded past draws actually looked — each rule lets ~95 % of past draws through. Describes the past; it cannot predict the next draw.",
+      apply: (cfg) => {
+        const guess = deriveBestGuess(cfg, state.history[cfg.id], 0.95);
+        state.bestGuess = guess;
+        return guess ? guess.settings : null;
+      }
+    }
+  };
+
+  function applyPreset(id, quiet) {
+    const preset = PRESETS[id];
+    if (!preset) return;
+    const values = preset.apply(LOTTERIES[state.lotteryId]);
+    if (!values) {
+      if (quiet) return;
+      showToast(id === "history"
+        ? `Best guess needs at least 40 loaded past draws — you have ${state.history[state.lotteryId].length}. Fetch or import results first.`
+        : "Could not apply that preset.");
+      return;
+    }
+    for (const [key, value] of Object.entries(values)) {
+      const el = document.getElementById(key);
+      if (!el) continue;
+      if (el.type === "checkbox") el.checked = !!value;
+      else el.value = value;
+    }
+    state.preset = id;
+    if (id !== "history") state.bestGuess = null;
+    syncCriterionBodies();
+    syncBiasOutputs();
+    renderPresetState();
+    updatePanelCounts();
+    scheduleStrictness();
+    saveState();
+    if (!quiet) showToast(`${preset.label} preset applied — generate to see it.`);
+  }
+
+  function renderPresetNotes() {
+    const ul = $("#preset-notes");
+    const g = state.preset === "history" ? state.bestGuess : null;
+    if (!g) { ul.hidden = true; ul.innerHTML = ""; return; }
+    ul.hidden = false;
+    ul.innerHTML = `<li class="pn-head">Based on ${g.n} past draws (each rule keeps ~${g.coveragePct} % of them):</li>` +
+      g.notes.map((n) => `<li>${escapeHtml(n)}</li>`).join("") +
+      `<li class="pn-foot">Past draws are random: this matches how they looked, it does not make the next draw more predictable.</li>`;
+  }
+
+  function renderPresetState() {
+    for (const chip of document.querySelectorAll(".chip[data-preset]")) {
+      chip.setAttribute("aria-pressed", chip.dataset.preset === state.preset ? "true" : "false");
+    }
+    renderPresetNotes();
+    const p = PRESETS[state.preset];
+    $("#preset-desc").textContent = p
+      ? p.desc
+      : state.preset === "custom"
+        ? "Custom rules — you've adjusted the settings below."
+        : "Not sure where to start? Balanced is a good default.";
+  }
+
+  /* ---------- live rule strictness ---------- */
+
+  let strictTimer = null;
+  function scheduleStrictness() {
+    clearTimeout(strictTimer);
+    strictTimer = setTimeout(updateStrictness, 120);
+  }
+
+  const fmtInt = (n) => Math.round(n).toLocaleString("en-GB");
+  /** Round to 3 significant figures for estimates. */
+  const sig3 = (n) => {
+    if (n < 1000) return Math.round(n);
+    const mag = Math.pow(10, Math.floor(Math.log10(n)) - 2);
+    return Math.round(n / mag) * mag;
+  };
+  function fmtPct(p) {
+    const v = p * 100;
+    if (v >= 99.995) return "100 %";
+    if (v >= 10) return `${v.toFixed(1)} %`;
+    if (v >= 1) return `${v.toFixed(2)} %`;
+    if (v >= 0.01) return `${v.toFixed(3)} %`;
+    return v === 0 ? "0 %" : "< 0.01 %";
+  }
+
+  function updateStrictness() {
+    const cfg = LOTTERIES[state.lotteryId];
+    const { criteria, historyIndex } = buildContext(cfg);
+    state.strict = ruleStrictness(cfg, criteria, historyIndex, 4000);
+    renderHistImpact(cfg, criteria);
+    const space = estimateSpace(cfg, criteria, historyIndex, 30000);
+    renderSpace(cfg, space);
+    renderRestrictions(cfg, criteria, space, space.feasible ? diagnoseRejections(cfg, criteria, historyIndex, [], null, 3000) : null);
+
+    const box = $("#strictness");
+    let level;
+    let text;
+    if (!space.feasible) {
+      level = "conflict";
+      $("#strictness-value").textContent = "Conflict";
+      text = space.problems[0];
+    } else {
+      const pct = space.share * 100;
+      $("#strictness-value").textContent = pct >= 99.5 ? "None" : pct < 0.1 ? "< 0.1% pass" : `${space.exact ? "" : "≈ "}${pct < 10 ? pct.toFixed(1) : Math.round(pct)}% pass`;
+      if (pct >= 40) {
+        level = "relaxed";
+        text = "Easy-going — most random rows already fit your rules.";
+      } else if (pct >= 5) {
+        level = "moderate";
+        text = "Moderate — your rules filter out many random rows, rows still generate instantly.";
+      } else if (pct >= 0.5) {
+        level = "strict";
+        text = "Strict — only a small share of rows fit. Still fine, but adding more rules may force some to be relaxed.";
+      } else {
+        level = "strict";
+        text = "Very strict — expect some rows to be relaxed. Loosen a rule if you want every row to comply.";
+      }
+    }
+    box.dataset.level = level;
+    $("#strictness-fill").style.width = space.feasible ? `${Math.max(3, Math.min(100, Math.round(space.share * 100)))}%` : "100%";
+    $("#strictness-text").textContent = text;
+    scheduleDashboard();
+  }
+
+  /** Header bar: total filtering from all rules, as a number and a percentage. */
+  function renderTopFilter(space) {
+    const bar = $("#topbar-filter");
+    $("#tf-total").textContent = fmtInt(space.total);
+    if (!space.feasible) {
+      bar.dataset.state = "conflict";
+      $("#tf-out").textContent = "—";
+      $("#tf-pct").textContent = "rules conflict";
+      $("#tf-keep").textContent = "0";
+      $("#tf-keep-pct").textContent = "";
+      $("#tf-bar-keep").style.width = "0%";
+      bar.title = space.problems[0];
+      return;
+    }
+    const removed = space.total - space.count;
+    const approx = space.exact ? "" : "≈ ";
+    const show = (v) => fmtInt(space.exact ? v : sig3(v));
+    bar.dataset.state = "ok";
+    bar.title = space.exact ? "Counted exactly." : `Estimate; likely between ${fmtInt(sig3(space.total - space.hi))} and ${fmtInt(sig3(space.total - space.lo))} removed.`;
+    $("#tf-out").textContent = removed <= 0 ? "0" : `−${approx}${show(removed)}`;
+    $("#tf-pct").textContent = removed <= 0 ? "0 %" : `${approx}${fmtPct(1 - space.share)}`;
+    $("#tf-keep").textContent = `${approx}${show(space.count)}`;
+    $("#tf-keep-pct").textContent = `(${approx}${fmtPct(space.share)})`;
+    $("#tf-bar-keep").style.width = `${Math.max(0.3, space.share * 100)}%`;
+  }
+
+  /** Top-of-page comparison: all possible rows vs rows that fit the rules. */
+  function renderSpace(cfg, space) {
+    renderTopFilter(space);
+    const card = $("#space-card");
+    const oneIn = fmtInt(space.total);
+    $("#space-total").textContent = fmtInt(space.total);
+    $("#space-total-sub").textContent = cfg.starPick
+      ? `no rules applied · ${cfg.mainPick} of ${cfg.mainMax} numbers × ${cfg.starPick} of ${cfg.starMax} stars`
+      : `no rules applied · ${cfg.mainPick} of ${cfg.mainMax} numbers`;
+    card.dataset.state = space.feasible ? "ok" : "conflict";
+    if (!space.feasible) {
+      $("#space-count").textContent = "—";
+      $("#space-count-sub").textContent = "your rules conflict";
+      $("#space-pct").textContent = "—";
+      $("#space-pct-sub").textContent = "";
+      $("#space-bar-fill").style.width = "100%";
+      $("#space-note").textContent = space.problems[0];
+      return;
+    }
+    const approx = space.exact ? "" : "≈ ";
+    const count = space.exact ? fmtInt(space.count) : fmtInt(sig3(space.count));
+    $("#space-count").textContent = approx + count;
+    $("#space-count-sub").textContent = space.exact
+      ? (space.count === space.total ? "same as above — no rules reduce it" : "counted exactly")
+      : `estimate, likely between ${fmtInt(sig3(space.lo))} and ${fmtInt(sig3(space.hi))}`;
+    $("#space-pct").textContent = approx + fmtPct(space.share);
+    const removed = 1 - space.share;
+    $("#space-pct-sub").textContent = space.count === space.total ? "all rows still possible" : `${fmtPct(removed)} of all rows are ruled out`;
+    $("#space-bar-fill").style.width = `${Math.max(0.4, space.share * 100)}%`;
+    const pct = fmtPct(space.share);
+    $("#space-note").innerHTML = space.count === space.total
+      ? `Every row has the same <strong>1 in ${oneIn}</strong> chance of being the winning row. Add rules above to see how much they narrow the field.`
+      : `<strong>If the draw lands inside your pool</strong>, each row's chance is about <strong>1 in ${fmtInt(space.exact ? space.count : sig3(space.count))}</strong> instead of 1 in ${oneIn} — <strong>${boostText(space.share)} better</strong>. ` +
+        `But it lands inside only <strong>${pct}</strong> of the time, so your overall odds are unchanged. See the Dashboard for the full comparison.`;
+  }
+
+  /* ---------- backtest against past draws (live) ---------- */
+
+  // rule id -> checkbox that switches it on/off
+  const HIST_RULE_BOX = {
+    maxRun: "crit-maxrun", oddEven: "crit-oddeven", sumRange: "crit-sum", zoneSpread: "crit-zone", parityRun: "crit-parity",
+    maxArithmetic: "crit-arith", sameLastDigit: "ap-lastdigit", sharedMultiple: "ap-multiple", lowHigh: "ap-lowhigh",
+    birthdayBias: "crit-birthday", zonesUsed: "crit-zonesused", reuseLast: "reuse-enabled", excludeNumbers: "crit-exclude", requireNumbers: "crit-require",
+    historyExact: "hist-exact", historySubset: "hist-subset", batchOverlap: "crit-overlap"
+  };
+  let histEls = null;
+
+  function ensureHistElements() {
+    if (histEls) return histEls;
+    histEls = {};
+    for (const [rule, boxId] of Object.entries(HIST_RULE_BOX)) {
+      const box = document.getElementById(boxId);
+      const label = box && box.closest("label.toggle");
+      if (!label) continue;
+      const chip = document.createElement("span");
+      chip.className = "hist-chip";
+      chip.hidden = true;
+      label.appendChild(chip);
+      let line = null;
+      const body = document.querySelector(`.criterion-body[data-for="${boxId}"]`);
+      if (body) {
+        line = document.createElement("p");
+        line.className = "hist-line";
+        line.hidden = true;
+        body.insertBefore(line, body.firstChild);
+      }
+      histEls[rule] = { chip, line };
+    }
+    return histEls;
+  }
+
+  function renderHistImpact(cfg, criteria) {
+    const draws = activeDraws();
+    const els = ensureHistElements();
+    const impact = historicalImpact(cfg, criteria, draws);
+    state.histImpact = impact;
+    const windowTxt = $("#hist-window").checked ? `the last ${Math.max(1, intVal("hist-window-years", 5))} year${intVal("hist-window-years", 5) === 1 ? "" : "s"}` : "all loaded draws";
+    const strict = state.strict || {};
+    for (const [rule, { chip, line }] of Object.entries(els)) {
+      const r = impact.rules[rule];
+      const s = strict[rule];
+      if ((!r || !r.tested) && s === undefined) {
+        chip.hidden = true;
+        if (line) line.hidden = true;
+        continue;
+      }
+      const enabled = r ? r.enabled : !!(document.getElementById(HIST_RULE_BOX[rule]) || {}).checked;
+      const parts = [];
+      const titleParts = [];
+      const strictTxt = s === undefined ? "" : `${fmtPct(s)}`;
+      if (r && r.tested) {
+        const pct = `${((r.failed / r.tested) * 100).toFixed(r.failed && r.failed / r.tested < 0.1 ? 1 : 0)} %`;
+        parts.push(`<b>${r.failed}</b> of ${r.tested} out`);
+        titleParts.push(`${enabled ? "Filters out" : "Would filter out"} ${r.failed} of ${r.tested} past draws (${pct}) in ${windowTxt}.`);
+      }
+      if (s !== undefined) {
+        if (!parts.length) parts.push(`rejects <b>${strictTxt}</b>`);
+        titleParts.push(`On its own it rejects ${strictTxt} of all possible rows.`);
+      }
+      chip.hidden = false;
+      chip.className = `hist-chip${enabled ? " on" : ""}${s !== undefined && s > 0.5 && enabled ? " rej" : ""}`;
+      chip.innerHTML = parts.join(" · ");
+      chip.title = titleParts.join(" ");
+      if (line) {
+        line.hidden = false;
+        const bits = [];
+        if (r && r.tested) bits.push(`In ${windowTxt} (${r.tested} past draws) this rule ${enabled ? "filters out" : "would filter out"} <b>${r.failed}</b> (${((r.failed / r.tested) * 100).toFixed(r.failed && r.failed / r.tested < 0.1 ? 1 : 0)} %); <b>${r.tested - r.failed}</b> would still pass.`);
+        if (s !== undefined) bits.push(`Alone it rejects <b>${strictTxt}</b> of all possible rows${s > 0.9 ? " — very strict" : s > 0.5 ? " — strict" : ""}.`);
+        line.innerHTML = bits.join(" ");
+      }
+    }
+    const bt = $("#backtest-text");
+    if (!impact.total) {
+      bt.textContent = "Load results to see how your rules would have treated past draws.";
+    } else {
+      const share = impact.allPass / impact.total;
+      bt.innerHTML = `Past draws: <b>${impact.allPass} of ${impact.total}</b> (${(share * 100).toFixed(share < 0.1 ? 1 : 0)} %) would have passed every rule you have on.`;
+    }
+  }
+
+  /* ---------- restrictions: what limits your numbers (high level) ---------- */
+
+  function severityOf(share) {
+    return share >= 0.95 ? "blocking" : share >= 0.6 ? "heavy" : share >= 0.25 ? "moderate" : "light";
+  }
+  const SEV_LABEL = { blocking: "BLOCKING", heavy: "HEAVY", moderate: "MODERATE", light: "LIGHT" };
+  const SEV_ORDER = { blocking: 3, heavy: 2, moderate: 1, light: 0 };
+
+  function renderRestrictions(cfg, criteria, space, diag) {
+    const banner = $("#restrict-banner");
+    const rows = rowCount();
+    // Active rules with how much of the candidate rows each rejects.
+    const items = (diag && diag.rules ? diag.rules : []).map((r) => Object.assign({}, r));
+    // Overlap between rows can only be predicted, not sampled before a coupon exists.
+    let pHard = diag ? diag.passHard : 1;
+    if (criteria.batchOverlap.enabled && rows > 1) {
+      const ov = overlapAcceptance(cfg, criteria.batchOverlap.maxShared, rows);
+      pHard *= ov.last;
+      items.push(Object.assign(overlapRuleInfo(criteria), { kind: "hard", share: 1 - ov.last, sole: 1 - ov.last, note: `row ${rows} of ${rows} must differ from ${rows - 1} earlier rows` }));
+    }
+    items.sort((p, q) => q.share - p.share);
+    for (const it of items) it.sev = severityOf(it.share);
+    const hardItems = items.filter((i) => i.kind === "hard");
+
+    let level;
+    let title;
+    let sub;
+    if (!space.feasible) {
+      level = "blocked";
+      title = "Blocked — your rules contradict each other";
+      sub = escapeHtml(space.problems[0]);
+    } else if (pHard * MAX_ATTEMPTS_PER_ROW < 5) {
+      const cause = hardItems[0] || items[0];
+      level = "blocked";
+      title = "Blocked — no new rows can be drawn with these rules";
+      sub = cause ? `Main cause: <b>${escapeHtml(cause.name)}</b> rejects <b>${fmtPct(cause.share)}</b> of candidate rows. Switch it off or loosen it below.` : "Loosen the rules below.";
+    } else if ((diag ? diag.passAll : 1) < 0.01 || items.some((i) => i.kind === "hard" && i.share > 0.9)) {
+      level = "tight";
+      title = `Tight — only ${fmtPct(diag ? diag.passAll : 1)} of candidate rows pass every rule`;
+      sub = "Drawing still works, but some style rules will be relaxed on many rows. The biggest restrictions are:";
+    } else {
+      level = "ok";
+      const shown = items.filter((i) => i.share >= 0.25);
+      title = `Rules are workable — ${fmtPct(diag ? diag.passAll : 1)} of candidate rows pass every rule`;
+      sub = shown.length ? "The rules that restrict your numbers most:" : "No single rule restricts your numbers much.";
+    }
+    banner.dataset.level = level;
+    $("#rb-icon").textContent = { ok: "✓", tight: "!", blocked: "✕" }[level];
+    $("#rb-title").textContent = title;
+    $("#rb-sub").innerHTML = sub;
+
+    const list = $("#rb-items");
+    list.innerHTML = "";
+    const minShare = level === "ok" ? 0.25 : 0.1;
+    for (const it of items.filter((i) => i.share >= minShare).slice(0, 5)) {
+      const boxId = HIST_RULE_BOX[it.id];
+      const row = document.createElement("div");
+      row.className = "rb-item";
+      row.dataset.sev = it.sev;
+      row.innerHTML = `<div class="rb-name"><strong>${escapeHtml(it.name)}<span class="sev sev-${it.sev}">${SEV_LABEL[it.sev]}</span></strong><span>${escapeHtml(it.label)}${it.kind === "hard" ? " · cannot be relaxed" : ""}</span></div>` +
+        `<div class="rb-bar" role="img" aria-label="${escapeHtml(it.name)} rejects ${fmtPct(it.share)}"><i style="width:${Math.max(0.5, it.share * 100).toFixed(1)}%"></i></div>` +
+        `<div class="rb-pct">rejects ${escapeHtml(fmtPct(it.share))}</div>` +
+        (boxId ? `<div class="rb-actions"><button type="button" class="btn small" data-off="${it.id}" data-regen="0">Switch off</button><button type="button" class="btn small ghost" data-edit="${it.id}">Edit</button></div>` : "<div></div>");
+      list.appendChild(row);
+    }
+    state.restrictLevel = level;
+    markSeverity(items);
+  }
+
+  /** Colour each rule in the sidebar (and its panel header) by how restrictive it is. */
+  function markSeverity(items) {
+    const bySev = new Map(items.map((i) => [i.id, i]));
+    const panelWorst = {};
+    for (const [rule, boxId] of Object.entries(HIST_RULE_BOX)) {
+      const box = document.getElementById(boxId);
+      const crit = box && box.closest(".criterion");
+      const el = histEls && histEls[rule];
+      const it = bySev.get(rule);
+      const enabled = box && box.checked;
+      const sev = enabled && it ? it.sev : null;
+      if (crit) {
+        if (sev && sev !== "light") crit.dataset.sev = sev; else delete crit.dataset.sev;
+      }
+      if (el && el.chip) {
+        el.chip.className = el.chip.className.replace(/\ssev-chip-\w+/g, "");
+        if (sev && sev !== "light") el.chip.classList.add(`sev-chip-${sev}`);
+      }
+      const panel = crit && crit.closest("details[data-panel]");
+      if (panel && sev) {
+        const key = panel.dataset.panel;
+        if (!panelWorst[key] || SEV_ORDER[sev] > SEV_ORDER[panelWorst[key]]) panelWorst[key] = sev;
+      }
+    }
+    for (const details of document.querySelectorAll("details[data-panel]")) {
+      const badge = details.querySelector(".panel-count");
+      if (!badge) continue;
+      badge.className = badge.className.replace(/\ssev-\w+/g, "");
+      const w = panelWorst[details.dataset.panel];
+      if (w && SEV_ORDER[w] >= 1) badge.classList.add(`sev-${w}`);
+    }
+  }
+
+  /* ---------- dashboard view ---------- */
+
+  const RULE_TARGET = {
+    maxRun: ["balance", "crit-maxrun"], oddEven: ["balance", "crit-oddeven"], sumRange: ["balance", "crit-sum"],
+    zoneSpread: ["balance", "crit-zone"], zonesUsed: ["balance", "crit-zonesused"], parityRun: ["balance", "crit-parity"],
+    maxArithmetic: ["antipatterns", "crit-arith"], sameLastDigit: ["antipatterns", "ap-lastdigit"],
+    sharedMultiple: ["antipatterns", "ap-multiple"], lowHigh: ["antipatterns", "ap-lowhigh"], birthdayBias: ["antipatterns", "crit-birthday"],
+    reuseLast: [null, "reuse-enabled"], historyExact: ["history", "hist-exact"], historySubset: ["history", "hist-subset"]
+  };
+
+  let dashToken = 0;
+  let dashTimer = null;
+  const dashVisible = () => state.view === "dashboard";
+
+  function setView(view) {
+    state.view = view;
+    const dash = view === "dashboard";
+    $("#picker-view").hidden = dash;
+    $("#dashboard-view").hidden = !dash;
+    for (const [id, v] of [["tab-picker", "picker"], ["tab-dashboard", "dashboard"]]) {
+      const t = document.getElementById(id);
+      t.classList.toggle("active", v === view);
+      t.setAttribute("aria-selected", v === view ? "true" : "false");
+      t.tabIndex = v === view ? 0 : -1;
+    }
+    document.body.dataset.view = view;
+    window.scrollTo(0, 0);
+    if (dash) renderDashboard();
+  }
+
+  function scheduleDashboard() {
+    if (!dashVisible()) return;
+    clearTimeout(dashTimer);
+    dashTimer = setTimeout(renderDashboard, 150);
+  }
+
+  function ringSvg(share) {
+    const C = 2 * Math.PI * 52;
+    const len = Math.max(0.5, Math.min(1, share)) * C;
+    return `<svg viewBox="0 0 120 120" aria-hidden="true"><defs><linearGradient id="ringGrad" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="var(--fill-a)"/><stop offset="100%" stop-color="var(--fill-b)"/></linearGradient></defs>` +
+      `<circle class="ring-track" cx="60" cy="60" r="52"/><circle class="ring-fill" cx="60" cy="60" r="52" stroke-dasharray="${len.toFixed(1)} ${C.toFixed(1)}"/>` +
+      `<text class="ring-pct" x="60" y="62">${escapeHtml(fmtPct(share).replace(" %", "%"))}</text><text class="ring-sub" x="60" y="76">of all rows fit</text></svg>`;
+  }
+
+  /** "×2.6" style multiplier for how much better a row is if the draw fits the rules. */
+  function boostText(share) {
+    const m = 1 / share;
+    return `×${m >= 10 ? Math.round(m) : m.toFixed(1)}`;
+  }
+
+  function oneInText(total, n) {
+    if (!n) return "—";
+    const v = total / n;
+    return `1 in ${fmtInt(v >= 1000 ? sig3(v) : v)}`;
+  }
+
+  function renderDashboard() {
+    if (!dashVisible()) return;
+    const token = ++dashToken;
+    const cfg = LOTTERIES[state.lotteryId];
+    $("#dash-title").textContent = `Dashboard — ${cfg.name}`;
+    $("#dash-busy").hidden = false;
+    setTimeout(() => {
+      if (token !== dashToken) return;
+      const { criteria, historyIndex } = buildContext(cfg);
+      renderHistImpact(cfg, criteria);
+      const bd = ruleBreakdown(cfg, criteria, historyIndex, 40000);
+      if (token !== dashToken) return;
+      drawDashboard(cfg, criteria, historyIndex, bd);
+      $("#dash-busy").hidden = true;
+    }, 30);
+  }
+
+  function drawDashboard(cfg, criteria, historyIndex, bd) {
+    const total = bd.total;
+    const rows = rowCount();
+    const price = state.rowPrice[cfg.id];
+    const kr = (v) => v.toLocaleString("nb-NO", { maximumFractionDigits: 0 });
+    const approx = bd.exact ? "" : "≈ ";
+    const cnt = (v) => approx + fmtInt(bd.exact ? v : sig3(v));
+
+    // --- hero ---
+    if (!bd.feasible) {
+      $("#dash-ring").innerHTML = ringSvg(1);
+      $("#dash-ring-caption").innerHTML = `<strong>Your rules conflict.</strong><br>${escapeHtml(bd.problems[0])}`;
+      for (const id of ["kpi-fit", "kpi-out"]) $("#" + id).textContent = "—";
+      $("#kpi-total").textContent = fmtInt(total);
+      $("#funnel").innerHTML = `<p class="dash-hint">Fix the conflicting rule to see the breakdown.</p>`;
+      $("#proof").innerHTML = "";
+      renderDashRules(bd, null);
+      renderBoard(cfg, criteria);
+      renderDashData(cfg, criteria, historyIndex);
+      return;
+    }
+    const share = bd.share;
+    $("#dash-ring").innerHTML = ringSvg(share);
+    $("#dash-ring-caption").innerHTML = share >= 0.9995
+      ? "<strong>No rule narrows the field.</strong><br>Every possible row is still on the table."
+      : `<strong>${escapeHtml(fmtPct(share))}</strong> of all possible rows fit your rules.<br>${escapeHtml(fmtPct(1 - share))} are ruled out.`;
+    $("#kpi-total").textContent = fmtInt(total);
+    $("#kpi-total-sub").textContent = cfg.starPick ? `${cfg.mainPick} of ${cfg.mainMax} × ${cfg.starPick} of ${cfg.starMax} stars` : `${cfg.mainPick} of ${cfg.mainMax} numbers`;
+    $("#kpi-fit").textContent = cnt(bd.count);
+    $("#kpi-fit-sub").textContent = bd.exact ? "counted exactly" : `estimate from ${fmtInt(bd.samples)} sampled rows`;
+    $("#kpi-out").textContent = cnt(total - bd.count);
+    $("#kpi-out-sub").textContent = `${fmtPct(1 - share)} of the field`;
+    $("#kpi-odds").textContent = `1 in ${fmtInt(total)}`;
+
+    // --- funnel ---
+    const fRows = [];
+    const bar = (cls, name, label, cum, solo, valCount) => {
+      const w = Math.max(0.4, cum * 100);
+      const soloMark = solo === null ? "" : `<i class="fun-solo" style="left:${(Math.max(0, Math.min(1, solo)) * 100).toFixed(2)}%" title="alone: ${fmtPct(solo)}"></i>`;
+      return `<div class="fun-row ${cls}"><div class="fun-name"><strong>${escapeHtml(name)}</strong><span>${escapeHtml(label)}</span></div>` +
+        `<div class="fun-track" role="img" aria-label="${escapeHtml(name)}: ${fmtPct(cum)} of all rows remain"><div class="fun-fill" style="width:${w.toFixed(2)}%"></div>${soloMark}</div>` +
+        `<div class="fun-val"><strong>${escapeHtml(fmtPct(cum))}</strong><span>${escapeHtml(valCount)}</span></div></div>`;
+    };
+    fRows.push(bar("start", "All possible rows", "no rules", 1, null, fmtInt(total)));
+    let base = bd.constrainedShare;
+    if (base < 0.99999) {
+      fRows.push(bar("", "Excluded / required numbers", `${criteria.excludeNumbers.enabled && criteria.excludeNumbers.numbers.length ? "never " + criteria.excludeNumbers.numbers.join(", ") : ""}${criteria.requireNumbers.enabled && criteria.requireNumbers.numbers.length ? " always " + criteria.requireNumbers.numbers.join(", ") : ""}`.trim(), base, null, fmtInt(base * total)));
+    }
+    const minSolo = Math.min(...bd.steps.map((s) => s.solo), 1);
+    for (const s of bd.steps) {
+      const cum = base * s.cumulative;
+      const strongest = bd.steps.length > 1 && s.solo === minSolo && s.solo < 0.95;
+      fRows.push(bar(strongest ? "strongest" : "", s.name, `${s.label} · alone keeps ${fmtPct(s.solo)}`, cum, base * s.solo, cnt(cum * total)));
+    }
+    if (!bd.steps.length && base >= 0.99999) fRows.push(`<p class="dash-hint">No rules are switched on. Turn some on in the picker to see how they narrow the field.</p>`);
+    $("#funnel").innerHTML = fRows.join("") + `<p class="fun-legend"><i></i>marks how much that rule would keep <em>on its own</em>.</p>`;
+
+    // --- proof ---
+    const fit = bd.count;
+    $("#proof-hint").textContent = rows === 1
+      ? "Your odds for a single row, with and without the rules."
+      : `Your odds of winning the jackpot with ${rows} rows, with and without the rules.`;
+    const without = oneInText(total, rows);
+    const cond = oneInText(fit, rows);
+    const overall = oneInText(total, rows);
+    const coverCost = fit * price;
+    const boost = share < 0.9995
+      ? `<div class="proof-boost"><div class="boost-num">${escapeHtml(boostText(share))}</div><div class="boost-text"><strong>If the draw lands inside your pool</strong>, each row's chance is <strong>1 in ${escapeHtml(cnt(fit))}</strong> instead of 1 in ${escapeHtml(fmtInt(total))} — ${escapeHtml(boostText(share))} better.<span>The condition: it lands inside only <b>${escapeHtml(fmtPct(share))}</b> of the time.</span></div></div>`
+      : "";
+    $("#proof").innerHTML = boost +
+      `<div class="proof-col"><h4>Without rules</h4><div class="proof-eq">${rows} row${rows === 1 ? "" : "s"} ÷ <b>${fmtInt(total)}</b> possible rows</div><div class="proof-res">${escapeHtml(without)}</div></div>` +
+      `<div class="proof-col"><h4>With your rules</h4><div class="proof-eq">Chance the draw fits your rules: <b>${escapeHtml(fmtPct(share))}</b><br>If it does, ${rows} row${rows === 1 ? "" : "s"} ÷ <b>${escapeHtml(cnt(fit))}</b> fitting rows: <b>${escapeHtml(cond)}</b></div><div class="proof-res">${escapeHtml(fmtPct(share))} × ${escapeHtml(cond)} = ${escapeHtml(overall)}</div></div>` +
+      `<div class="proof-eqsign">= the same overall chance</div>` +
+      `<div class="proof-note"><strong>Both statements are true.</strong> <em>Given</em> that the draw lands inside your pool, your odds are ${escapeHtml(boostText(share))} better. But you place your bet before the draw, and it only lands inside ${escapeHtml(fmtPct(share))} of the time — so across all draws the higher chance and the lower probability of qualifying cancel exactly. ` +
+      (share < 0.9995 ? `To cover every fitting row you would need about ${escapeHtml(cnt(fit))} rows (≈ ${kr(coverCost)} kr) and would still win only ${escapeHtml(fmtPct(share))} of the time.` : `With no rules every row is equally likely.`) + `</div>`;
+
+    renderDashRules(bd, criteria);
+    renderDashBacktest(bd);
+    renderBoard(cfg, criteria);
+    renderDashData(cfg, criteria, historyIndex);
+  }
+
+  function renderDashBacktest(bd) {
+    const el = $("#dash-backtest");
+    const imp = state.histImpact;
+    if (!imp || !imp.total) { el.innerHTML = ""; return; }
+    const pastShare = imp.allPass / imp.total;
+    el.innerHTML = `<b>Backtest:</b> ${imp.allPass} of your ${imp.total} loaded past draws (${fmtPct(pastShare)}) would have passed every rule you have on` +
+      (bd && bd.feasible ? `, compared with ${fmtPct(bd.share)} of all possible rows. If the two are close, your rules treat real draws like random rows; a much lower past share means the rules clash with how draws actually fall.` : ".");
+  }
+
+  function renderDashRules(bd, criteria) {
+    const grid = $("#dash-rules");
+    grid.innerHTML = "";
+    const stepById = new Map((bd.steps || []).map((s) => [s.id, s]));
+    for (const r of bd.catalog) {
+      const s = stepById.get(r.id);
+      const card = document.createElement("button");
+      card.type = "button";
+      card.className = `rule-card ${r.enabled ? "on" : "off"}`;
+      card.dataset.rule = r.id;
+      const hi = state.histImpact && state.histImpact.rules[r.id];
+      const histLine = hi && hi.tested ? `<div class="rc-hist">${r.enabled ? "Filters out" : "Would filter out"} <b>${hi.failed}</b> of ${hi.tested} past draws</div>` : "";
+      const keep = r.enabled && s ? `<div class="rc-keep">Alone keeps <b>${escapeHtml(fmtPct(s.solo))}</b></div><div class="rc-bar"><i style="width:${(s.solo * 100).toFixed(1)}%"></i></div>` : "";
+      card.innerHTML = `<div class="rc-top"><span class="rc-group">${escapeHtml(r.group)}</span><span class="rc-chip">${r.enabled ? "ON" : "OFF"}</span></div>` +
+        `<div class="rc-name">${escapeHtml(r.name)}</div><div class="rc-label">${escapeHtml(r.label)}</div>${keep}${histLine}`;
+      grid.appendChild(card);
+    }
+  }
+
+  function renderBoard(cfg, criteria) {
+    const draws = activeDraws();
+    const freq = numberFrequencies(draws, cfg);
+    const max = Math.max(1, ...freq.slice(1));
+    const min = Math.min(...freq.slice(1));
+    const span = Math.max(1, max - min);
+    const exc = new Set(criteria.excludeNumbers.enabled ? criteria.excludeNumbers.numbers : []);
+    const req = new Set(criteria.requireNumbers.enabled ? criteria.requireNumbers.numbers : []);
+    const board = $("#board");
+    board.innerHTML = "";
+    for (let n = 1; n <= cfg.mainMax; n++) {
+      const t = document.createElement("i");
+      const heat = draws.length ? (freq[n] - min) / span : 0;
+      t.className = `tile${state.lastDrawSet.has(n) ? " last" : ""}${req.has(n) ? " req" : ""}${exc.has(n) ? " exc" : ""}`;
+      t.style.setProperty("--heat", heat.toFixed(3));
+      t.textContent = n;
+      t.title = `${n}${draws.length ? ` — drawn ${freq[n]}×` : ""}${state.lastDrawSet.has(n) ? " · in the last draw" : ""}${req.has(n) ? " · required" : ""}${exc.has(n) ? " · excluded" : ""}`;
+      board.appendChild(t);
+    }
+  }
+
+  function renderDashData(cfg, criteria, historyIndex) {
+    const all = state.history[cfg.id];
+    const active = activeDraws();
+    const f = freshnessInfo(cfg);
+    const years = $("#hist-window").checked ? intVal("hist-window-years", 5) : null;
+    const price = state.rowPrice[cfg.id];
+    const rows = rowCount();
+    const list = (label, value, warn) => `<div class="dd-row"><span>${escapeHtml(label)}</span><strong class="${warn ? "dd-warn" : ""}">${escapeHtml(value)}</strong></div>`;
+    const lc = state.lastCollect[cfg.id];
+    const out = [];
+    out.push(list("Style preset", state.preset && PRESETS[state.preset] ? PRESETS[state.preset].label : state.preset === "custom" ? "Custom" : "None chosen"));
+    out.push(list("Rows / coupon cost", `${rows} × ${kr0(price)} kr = ${kr0(rows * price)} kr`));
+    out.push(list("Lookback window", years ? `${years} year${years === 1 ? "" : "s"}` : "all loaded draws"));
+    out.push(list("Draws used", all.length ? `${active.length} of ${all.length} loaded` : "none loaded", !all.length));
+    if (f.newest) out.push(list("Newest draw", f.newest.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }) + (f.stale ? ` (${f.missingSince} newer not loaded)` : ""), f.stale));
+    if (lc) out.push(list("Last fetch", new Date(lc.at).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" }) + (lc.missingWeeks ? ` · ${lc.missingWeeks} weeks missing` : ""), !!lc.missingWeeks));
+    out.push(list("Favour overdue / rare", `${criteria ? (document.getElementById("bias-overdue").checked ? intVal("bias-overdue-strength", 0) + " %" : "off") : "—"} / ${document.getElementById("bias-cold").checked ? intVal("bias-cold-strength", 0) + " %" : "off"}`));
+    out.push(list("Favour lower / higher half", document.getElementById("bias-half").checked && intVal("bias-half-value", 0) !== 0 ? (intVal("bias-half-value", 0) < 0 ? `lower ${-intVal("bias-half-value", 0)} %` : `higher ${intVal("bias-half-value", 0)} %`) : "off"));
+    out.push(list("Weighting changes", "which rows are likelier, not which are possible"));
+    const ex = criteria.excludeNumbers.enabled ? criteria.excludeNumbers.numbers : [];
+    const rq = criteria.requireNumbers.enabled ? criteria.requireNumbers.numbers : [];
+    out.push(list("Excluded numbers", ex.length ? ex.join(", ") : "none"));
+    out.push(list("Required numbers", rq.length ? rq.join(", ") : "none"));
+    out.push(list("Row overlap limit", criteria.batchOverlap.enabled ? `≤ ${criteria.batchOverlap.maxShared} shared` : "off"));
+    $("#dash-data").innerHTML = out.join("");
+  }
+  const kr0 = (v) => v.toLocaleString("nb-NO", { maximumFractionDigits: 0 });
+
+  /* ---------- collapsible panels ---------- */
+
+  function updatePanelCounts() {
+    for (const details of document.querySelectorAll("details[data-panel]")) {
+      const key = details.dataset.panel;
+      const badge = details.querySelector(`[data-count-for="${key}"]`);
+      if (key === "history") {
+        const n = state.history[state.lotteryId].length;
+        badge.textContent = n ? `${n} draws` : "none loaded";
+        badge.classList.toggle("on", n > 0);
+        continue;
+      }
+      const toggles = details.querySelectorAll('.toggle input[type="checkbox"]');
+      const on = [...toggles].filter((t) => t.checked).length;
+      badge.textContent = `${on} of ${toggles.length} on`;
+      badge.classList.toggle("on", on > 0);
+    }
+  }
+
+  function restorePanels() {
+    for (const details of document.querySelectorAll("details[data-panel]")) {
+      details.open = !!state.panelsOpen[details.dataset.panel];
+      details.addEventListener("toggle", () => {
+        state.panelsOpen[details.dataset.panel] = details.open;
+        syncPanelToggleButton();
+        saveState();
+      });
+    }
+    panelsRestored = true;
+    syncPanelToggleButton();
+  }
+
+  function syncPanelToggleButton() {
+    const all = [...document.querySelectorAll("details[data-panel]")];
+    const anyClosed = all.some((d) => !d.open);
+    const btn = $("#btn-toggle-panels");
+    btn.textContent = anyClosed ? "Expand all" : "Collapse all";
+    btn.setAttribute("aria-expanded", anyClosed ? "false" : "true");
+  }
+
+  /* ---------- shareable settings link ---------- */
+
+  function settingsToHash() {
+    const payload = { v: 1, lottery: state.lotteryId, preset: state.preset, settings: collectSettings() };
+    const json = JSON.stringify(payload);
+    const b64 = btoa(unescape(encodeURIComponent(json))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    return "#s=" + b64;
+  }
+
+  function readHashSettings() {
+    const m = location.hash.match(/^#s=([A-Za-z0-9_-]+)$/);
+    if (!m) return null;
+    try {
+      const b64 = m[1].replace(/-/g, "+").replace(/_/g, "/");
+      const json = decodeURIComponent(escape(atob(b64 + "===".slice((b64.length + 3) % 4))));
+      const data = JSON.parse(json);
+      return data && data.v === 1 && data.settings && typeof data.settings === "object" ? data : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  async function shareSettings() {
+    const url = location.href.split("#")[0] + settingsToHash();
+    try {
+      await navigator.clipboard.writeText(url);
+      showToast("Settings link copied — anyone opening it gets the same rules (not your history).");
+    } catch (e) {
+      history.replaceState(null, "", url);
+      showToast("Couldn't access the clipboard — the link is now in the address bar.");
+    }
+  }
+
+  function renderHalfOutputs() {
+    const v = intVal("bias-half-value", 0);
+    const out = $("#bias-half-out");
+    out.textContent = v === 0 ? "Neutral" : v < 0 ? `Favour lower half · ${Math.abs(v)} %` : `Favour higher half · ${v} %`;
+  }
+
+  /** Live preview of what the half slider does to a typical row. */
+  function renderHalfPreview() {
+    const el = $("#bias-half-preview");
+    if (!$("#bias-half").checked) { el.textContent = ""; return; }
+    const cfg = LOTTERIES[state.lotteryId];
+    const half = Math.ceil(cfg.mainMax / 2);
+    const v = intVal("bias-half-value", 0);
+    const neutral = (cfg.mainPick * half) / cfg.mainMax;
+    const avg = expectedLowCount(cfg, halfWeights(cfg, v), 1500);
+    el.innerHTML = v === 0
+      ? `Neutral: about <b>${neutral.toFixed(1)}</b> of ${cfg.mainPick} numbers come from the lower half (1–${half}).`
+      : `A typical row will have about <b>${avg.toFixed(1)}</b> of ${cfg.mainPick} numbers from the lower half (1–${half}) and <b>${(cfg.mainPick - avg).toFixed(1)}</b> from the higher half. Neutral would be ${neutral.toFixed(1)} / ${(cfg.mainPick - neutral).toFixed(1)}.`;
+  }
+
+  function syncBiasOutputs() {
+    renderHalfOutputs();
+    renderHalfPreview();
+    for (const [slider, out] of [["bias-overdue-strength", "bias-overdue-out"], ["bias-cold-strength", "bias-cold-out"]]) {
+      document.getElementById(out).textContent = document.getElementById(slider).value + " %";
+    }
   }
 
   /* ---------- event wiring ---------- */
@@ -430,53 +2180,254 @@
 
   function init() {
     loadState();
+    const shared = readHashSettings();
+    if (shared) {
+      applySettings(shared.settings);
+      if (shared.lottery && LOTTERIES[shared.lottery]) state.lotteryId = shared.lottery;
+      state.preset = typeof shared.preset === "string" ? shared.preset : "custom";
+      history.replaceState(null, "", location.href.split("#")[0]);
+    }
 
-    $("#switch-lotto").addEventListener("click", () => switchLottery("lotto"));
-    $("#switch-eurojackpot").addEventListener("click", () => switchLottery("eurojackpot"));
+    $("#switch-lotto").addEventListener("click", () => { switchLottery("lotto"); maybeAutoUpdate(); });
+    $("#switch-eurojackpot").addEventListener("click", () => { switchLottery("eurojackpot"); maybeAutoUpdate(); });
 
+    for (const id of ["crit-zonesused-min", "crit-zonesused-max"]) document.getElementById(id).addEventListener("input", renderZonesDemo);
+    for (const id of ["bias-overdue-strength", "bias-cold-strength", "bias-half-value"]) {
+      document.getElementById(id).addEventListener("input", syncBiasOutputs);
+    }
+    $("#bias-half").addEventListener("change", renderHalfPreview);
+    syncBiasOutputs();
+
+    // Any edit to a rule makes the setup "custom" and refreshes the gauges.
+    const sidebar = $(".sidebar");
+    sidebar.addEventListener("input", (e) => {
+      if (e.target.closest("details[data-panel]") && e.target.closest('details[data-panel]:not([data-panel="history"])')) {
+        if (state.preset !== "custom") {
+          state.preset = "custom";
+          renderPresetState();
+        }
+      }
+      scheduleStrictness();
+    });
     document.body.addEventListener("change", (e) => {
       if (e.target.matches("input")) {
         syncCriterionBodies();
         if (e.target.id === "hist-window" || e.target.id === "hist-window-years") {
           refreshHistoryStatus();
           renderStats();
+          renderCoverage();
         }
+        updatePanelCounts();
+        scheduleStrictness();
         saveState();
       }
+    });
+
+    for (const chip of document.querySelectorAll(".chip[data-preset]")) {
+      chip.addEventListener("click", () => applyPreset(chip.dataset.preset));
+    }
+    $("#btn-share").addEventListener("click", shareSettings);
+    $("#btn-toggle-panels").addEventListener("click", () => {
+      const all = [...document.querySelectorAll("details[data-panel]")];
+      const open = all.some((d) => !d.open);
+      for (const d of all) d.open = open;
+    });
+
+    $("#row-count").addEventListener("input", updateGenerateLabel);
+    $("#row-price").addEventListener("input", () => {
+      const v = parseFloat($("#row-price").value);
+      if (Number.isFinite(v) && v >= 0) {
+        state.rowPrice[state.lotteryId] = v;
+        renderSummary(LOTTERIES[state.lotteryId]);
+        saveState();
+      }
+    });
+
+    // Per-row actions (event delegation; rows are re-rendered often).
+    $("#tickets").addEventListener("click", (e) => {
+      const btn = e.target.closest("[data-action]");
+      const card = e.target.closest(".ticket[data-row]");
+      if (!btn || !card) return;
+      const i = parseInt(card.dataset.row, 10);
+      if (btn.dataset.action === "lock") toggleLock(i);
+      else if (btn.dataset.action === "reroll") rerollRow(i);
+      else if (btn.dataset.action === "copy") copyRow(i);
+    });
+
+    // Stats → criteria shortcuts.
+    $("#act-overdue").addEventListener("click", () => {
+      $("#bias-overdue").checked = true;
+      afterShortcut("weighting", "Favouring overdue numbers — adjust the strength under Smart weighting.");
+    });
+    $("#act-cold").addEventListener("click", () => {
+      $("#bias-cold").checked = true;
+      afterShortcut("weighting", "Favouring rarely-picked numbers — adjust it under Smart weighting.");
+    });
+    $("#act-exclude-hot").addEventListener("click", () => {
+      const cfg = LOTTERIES[state.lotteryId];
+      const prev = { checked: $("#crit-exclude").checked, value: $("#crit-exclude-list").value };
+      const merged = [...new Set(parseNumberList(prev.value, cfg.mainMax).concat(state.hotNumbers || []))].sort((a, b) => a - b);
+      $("#crit-exclude").checked = true;
+      $("#crit-exclude-list").value = merged.join(", ");
+      afterShortcut("yours", `Excluding ${merged.join(", ")}.`, () => {
+        $("#crit-exclude").checked = prev.checked;
+        $("#crit-exclude-list").value = prev.value;
+        afterShortcut("yours", "Exclusion undone.");
+      });
     });
 
     $("#btn-generate").addEventListener("click", generate);
     $("#btn-copy").addEventListener("click", copyTickets);
     $("#btn-csv").addEventListener("click", downloadCsv);
     $("#btn-print").addEventListener("click", () => window.print());
+    window.addEventListener("afterprint", () => showToast("Print dialog closed."));
 
-    $("#history-fetch").addEventListener("click", fetchHistory);
     $("#history-parse").addEventListener("click", () => {
       const text = $("#history-paste").value;
       if (!text.trim()) {
         setHistoryStatus("Paste some draws first.", false);
         return;
       }
-      addDraws(parseDraws(text, LOTTERIES[state.lotteryId]), "the pasted text");
+      addDraws(parseDraws(text, LOTTERIES[state.lotteryId]), "the pasted text", "paste");
       $("#history-paste").value = "";
     });
     $("#history-file").addEventListener("change", async (e) => {
       const file = e.target.files[0];
       if (!file) return;
       const text = await file.text();
-      addDraws(parseDraws(text, LOTTERIES[state.lotteryId]), `"${file.name}"`);
+      addDraws(parseDraws(text, LOTTERIES[state.lotteryId]), `"${file.name}"`, "file");
       e.target.value = "";
+    });
+    $("#history-crawl").addEventListener("click", fetchHistoryChain);
+    $("#history-download").addEventListener("click", downloadDataset);
+    $("#coverage-fetch").addEventListener("click", fetchHistoryChain);
+    $("#space-to-dashboard").addEventListener("click", () => setView("dashboard"));
+    const onRuleAction = (e) => {
+      const off = e.target.closest("[data-off]");
+      const edit = e.target.closest("[data-edit]");
+      const rule = (off || edit || {}).dataset && (off ? off.dataset.off : edit.dataset.edit);
+      if (!rule) return;
+      const box = document.getElementById(HIST_RULE_BOX[rule]);
+      if (!box) return;
+      if (off) {
+        box.checked = false;
+        box.dispatchEvent(new Event("change", { bubbles: true }));
+        syncCriterionBodies();
+        updatePanelCounts();
+        if (off.dataset.regen !== "0") generate(); else scheduleStrictness();
+      } else {
+        const target = RULE_TARGET[rule];
+        const panel = target ? target[0] : (rule === "batchOverlap" ? "yours" : null);
+        if (panel) { const d = document.querySelector(`details[data-panel="${panel}"]`); if (d) d.open = true; }
+        const wrap = box.closest(".criterion, .reuse-control") || box;
+        wrap.scrollIntoView({ block: "center" });
+        box.focus({ preventScroll: true });
+      }
+    };
+    $("#diag-rules").addEventListener("click", onRuleAction);
+    $("#rb-items").addEventListener("click", onRuleAction);
+
+    // View tabs (the picker stays exactly as it was).
+    $("#tab-picker").addEventListener("click", () => setView("picker"));
+    $("#tab-dashboard").addEventListener("click", () => setView("dashboard"));
+    $("#dash-to-picker").addEventListener("click", () => { setView("picker"); $("#tab-picker").focus(); });
+    $("#dash-refresh").addEventListener("click", renderDashboard);
+    $(".view-tabs").addEventListener("keydown", (e) => {
+      if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+      const next = state.view === "picker" ? "dashboard" : "picker";
+      setView(next);
+      $(next === "picker" ? "#tab-picker" : "#tab-dashboard").focus();
+    });
+    $("#dash-rules").addEventListener("click", (e) => {
+      const card = e.target.closest("[data-rule]");
+      if (!card) return;
+      const [panel, id] = RULE_TARGET[card.dataset.rule] || [];
+      setView("picker");
+      if (panel) { const d = document.querySelector(`details[data-panel="${panel}"]`); if (d) d.open = true; }
+      const el = document.getElementById(id);
+      const target = el && (el.closest(".criterion, .reuse-control") || el);
+      if (target) { target.scrollIntoView({ block: "center" }); const f = el.type === "checkbox" ? el : target.querySelector("input"); if (f) f.focus({ preventScroll: true }); }
+    });
+    $("#freshness-fetch").addEventListener("click", fetchHistoryChain);
+    $("#fetch-banner-close").addEventListener("click", () => ($("#fetch-banner").hidden = true));
+    $("#fetch-banner-details").addEventListener("click", () => {
+      const details = document.querySelector('details[data-panel="history"]');
+      if (details) details.open = true;
+      $("#source-status-wrap").scrollIntoView({ block: "center", behavior: "smooth" });
     });
     $("#history-demo").addEventListener("click", loadDemoData);
     $("#history-clear").addEventListener("click", () => {
-      state.history[state.lotteryId] = [];
-      refreshHistoryStatus();
-      renderStats();
-      saveState();
+      const id = state.lotteryId;
+      const snapshot = { history: state.history[id], provenance: state.provenance[id] };
+      if (!snapshot.history.length) return;
+      state.history[id] = [];
+      state.provenance[id] = [];
+      afterHistoryChange();
+      showToast(`Cleared ${snapshot.history.length} ${LOTTERIES[id].name} draws.`, "Undo", () => {
+        state.history[id] = snapshot.history;
+        state.provenance[id] = snapshot.provenance;
+        afterHistoryChange();
+        showToast("History restored.");
+      });
     });
 
-    switchLottery(state.lotteryId);
+    // Last draw editor + reuse dual-range.
+    $("#lastdraw-edit").addEventListener("click", openLastDrawEditor);
+    $("#lastdraw-save").addEventListener("click", saveLastDraw);
+    $("#lastdraw-cancel").addEventListener("click", () => ($("#lastdraw-editor").hidden = true));
+    $("#lastdraw-reset").addEventListener("click", resetLastDraw);
+    $("#lastdraw-tab-history").addEventListener("click", () => setEditorMode("history"));
+    $("#lastdraw-tab-manual").addEventListener("click", () => setEditorMode("manual"));
+    $("#lastdraw-date").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") saveLastDraw();
+    });
+    $("#lastdraw-input").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") saveLastDraw();
+    });
+    for (const id of ["reuse-enabled", "reuse-min", "reuse-max"]) {
+      document.getElementById(id).addEventListener("input", syncReuseUI);
+    }
+
+    // Sticky summary bar sits just below the (variable-height) sticky header.
+    const syncHeaderHeight = () =>
+      document.documentElement.style.setProperty("--header-h", $(".app-header").offsetHeight + "px");
+    syncHeaderHeight();
+    window.addEventListener("resize", syncHeaderHeight);
+
+    const meta = document.querySelector('meta[name="build"]');
+    if (meta) $("#build-id").textContent = meta.content;
+    restorePanels();
+    updateGenerateLabel();
+    switchLottery(state.lotteryId, true);
+    setTimeout(maybeAutoUpdate, 600);
     syncCriterionBodies();
+    syncReuseUI();
+    renderPresetState();
+    if (shared) showToast("Settings loaded from the shared link.");
+  }
+
+  function afterShortcut(panel, message, undo) {
+    state.preset = "custom";
+    renderPresetState();
+    syncCriterionBodies();
+    updatePanelCounts();
+    scheduleStrictness();
+    const details = document.querySelector(`details[data-panel="${panel}"]`);
+    if (details) details.open = true;
+    saveState();
+    showToast(message, undo ? "Undo" : null, undo);
+  }
+
+  function afterHistoryChange() {
+    refreshHistoryStatus();
+    renderStats();
+    renderCoverage();
+    renderFreshness();
+    refreshLastDraw();
+    renderProvenance();
+    updatePanelCounts();
+    scheduleStrictness();
+    saveState();
   }
 
   document.addEventListener("DOMContentLoaded", init);

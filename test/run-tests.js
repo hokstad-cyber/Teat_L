@@ -6,9 +6,9 @@ const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
 
-const context = { crypto: require("crypto").webcrypto, console };
+const context = { crypto: require("crypto").webcrypto, console, setTimeout, clearTimeout, fetch: undefined, AbortController: undefined };
 vm.createContext(context);
-for (const file of ["lotteries.js", "util.js", "history.js", "generator.js"]) {
+for (const file of ["lotteries.js", "util.js", "history.js", "generator.js", "crawler.js"]) {
   const code = fs.readFileSync(path.join(__dirname, "..", "js", file), "utf8");
   vm.runInContext(code, context, { filename: file });
 }
@@ -29,11 +29,21 @@ function assert(cond, name) {
 const {
   LOTTERIES, sampleDistinct, combinationKeys, longestConsecutiveRun, sumOf, countOdd,
   overlapCount, parseDrawsText, parseDraws, filterDrawsByYears, buildHistoryIndex,
-  dedupeDraws, generateTickets
+  dedupeDraws, generateTickets, buildResultsCsv, longestParityRun, longestArithmeticProgression,
+  maxSameLastDigit, maxSharedDivisor, zoneOfNumber, weightedSampleDistinct,
+  drawsSinceLastSeen, softRuleFailures, estimatePassRate,
+  isoWeekOf, isoWeekStart, isoWeeksInYear, coverageByWeek, parseNorskTippingV2, parseHeaderCsv,
+  mergeDrawsByDate, windowsNewestFirst, expectedDrawsInWeek, isoDateKey, drawsExpectedBetween,
+  estimateSpace, jackpotCombinations, binomial, ruleBreakdown, ruleCatalog, historicalImpact, diagnoseRejections, ruleStrictness, overlapAcceptance, halfWeights, expectedLowCount, deriveBestGuess, smallestCovering
 } = vm.runInContext(
   `({ LOTTERIES, sampleDistinct, combinationKeys, longestConsecutiveRun, sumOf, countOdd,
       overlapCount, parseDrawsText, parseDraws, filterDrawsByYears, buildHistoryIndex,
-      dedupeDraws, generateTickets })`,
+      dedupeDraws, generateTickets, buildResultsCsv, longestParityRun, longestArithmeticProgression,
+      maxSameLastDigit, maxSharedDivisor, zoneOfNumber, weightedSampleDistinct,
+      drawsSinceLastSeen, softRuleFailures, estimatePassRate,
+      isoWeekOf, isoWeekStart, isoWeeksInYear, coverageByWeek, parseNorskTippingV2, parseHeaderCsv,
+      mergeDrawsByDate, windowsNewestFirst, expectedDrawsInWeek, isoDateKey, drawsExpectedBetween,
+      estimateSpace, jackpotCombinations, binomial, ruleBreakdown, ruleCatalog, historicalImpact, diagnoseRejections, ruleStrictness, overlapAcceptance, halfWeights, expectedLowCount, deriveBestGuess, smallestCovering })`,
   context
 );
 
@@ -51,6 +61,45 @@ assert(longestConsecutiveRun([5, 9, 14]) === 1, "longestConsecutiveRun no run");
 assert(combinationKeys([1, 2, 3], 2).join(" ") === "1-2 1-3 2-3", "combinationKeys 3 choose 2");
 assert(combinationKeys([1, 2, 3, 4], 4).length === 1, "combinationKeys n choose n");
 assert(overlapCount([1, 2, 3], [3, 4, 5]) === 1, "overlapCount");
+
+/* weighted sampling */
+{
+  let contains34 = 0;
+  for (let i = 0; i < 200; i++) {
+    const s = weightedSampleDistinct(pool, 7, (n) => (n === 34 ? 1000 : 1));
+    assert(s.length === 7 && new Set(s).size === 7, "weighted: 7 distinct");
+    assert(s.every((n, j) => j === 0 || n > s[j - 1]), "weighted: sorted");
+    if (s.includes(34)) contains34++;
+  }
+  assert(contains34 >= 190, `weighted: heavy number nearly always present (${contains34}/200)`);
+
+  // uniform weights behave like plain sampling (no crash, full coverage possible)
+  const u = weightedSampleDistinct(pool, 34, () => 1);
+  assert(u.length === 34 && u[0] === 1 && u[33] === 34, "weighted: can exhaust pool");
+}
+
+/* drawsSinceLastSeen */
+{
+  const cfg = { mainMax: 10 };
+  const mk = (iso, mains) => ({ date: new Date(iso), mains, stars: [] });
+  const hist = [
+    mk("2026-06-01", [1, 2, 3]),   // newest -> gap 0
+    mk("2026-05-01", [4, 5, 6]),   // gap 1
+    mk("2026-04-01", [1, 7, 8])    // gap 2 (1 already seen newer)
+  ];
+  const gaps = drawsSinceLastSeen(hist, cfg);
+  assert(gaps[1] === 0 && gaps[4] === 1 && gaps[7] === 2, "drawsSinceLastSeen: gaps per number");
+  assert(gaps[9] === 3 && gaps[10] === 3, "drawsSinceLastSeen: never-seen numbers most overdue");
+}
+
+assert(longestParityRun([3, 7, 11, 19, 22]) === 4, "parity run: four odds in a row");
+assert(longestParityRun([1, 2, 3, 4]) === 1, "parity run: alternating");
+assert(longestParityRun([2, 4, 6, 8, 10]) === 5, "parity run: all even");
+assert(longestArithmeticProgression([5, 7, 10, 15, 20]) === 4, "AP: 5,10,15,20 as subsequence");
+assert(longestArithmeticProgression([1, 2, 4, 8]) === 2, "AP: no 3-term progression");
+assert(longestArithmeticProgression([3, 6, 9, 12, 15]) === 5, "AP: full progression");
+assert(maxSameLastDigit([7, 17, 27, 3, 12]) === 3, "same last digit");
+assert(maxSharedDivisor([3, 6, 9, 14, 25]) === 3, "shared divisor: three multiples of 3");
 
 /* ---- history parsing ---- */
 const lotto = LOTTERIES.lotto;
@@ -80,7 +129,47 @@ const jsonDraws = parseDraws(json, lotto);
 assert(jsonDraws.length === 2, "parseDraws handles JSON");
 assert(jsonDraws[1].date.getFullYear() === 2023, "JSON drawDate parsed");
 
+/* unofficial Norsk Tipping API shapes */
+{
+  // single-object response with anti-hijacking prefix and compact date
+  const ntLotto = 'while(true);/* 0; {"drawID":1234,"drawDate":"20240316","mainNumbers":[1,5,12,19,23,28,31],"additionalNumbers":[2]}';
+  const parsed = parseDraws(ntLotto, lotto);
+  assert(parsed.length === 1, "NT API: parses single-object lotto response");
+  assert(parsed[0].mains.join(",") === "1,5,12,19,23,28,31", "NT API: main numbers");
+  assert(parsed[0].date && parsed[0].date.getFullYear() === 2024 && parsed[0].date.getMonth() === 2 && parsed[0].date.getDate() === 16, "NT API: compact yyyymmdd date");
+
+  const ntEuro = '{"drawID":777,"drawDate":20240614,"mainNumbers":[7,19,28,33,45],"starNumbers":[3,9]}';
+  const parsedEuro = parseDraws(ntEuro, euro);
+  assert(parsedEuro.length === 1 && parsedEuro[0].stars.join(",") === "3,9", "NT API: eurojackpot stars");
+
+  // Lottoland fallback shape
+  const lottoland = '{"last":{"date":{"day":14,"month":6,"year":2024},"numbers":[7,19,28,33,45],"euroNumbers":[3,9]},"next":{}}';
+  const parsedLl = parseDraws(lottoland, euro);
+  assert(parsedLl.length === 1, "Lottoland: parses last draw");
+  assert(parsedLl[0].date && parsedLl[0].date.getMonth() === 5, "Lottoland: date object parsed");
+  assert(parsedLl[0].stars.join(",") === "3,9", "Lottoland: euroNumbers as stars");
+}
+
 assert(dedupeDraws(draws.concat(draws)).length === 3, "dedupeDraws removes duplicates");
+
+/* CSV builder round-trips through the importer */
+{
+  const csv = buildResultsCsv(draws, lotto);
+  const lines = csv.split("\n");
+  assert(lines[0] === "date,n1,n2,n3,n4,n5,n6,n7", "CSV: lotto header");
+  assert(lines.length === 4, "CSV: one line per draw plus header");
+  assert(lines[1].startsWith("2024-03-16,"), "CSV: newest first with ISO date");
+  assert(parseDraws(csv, lotto).length === 3, "CSV: importer reads it back");
+
+  const euroCsv = buildResultsCsv(
+    [{ date: new Date(2024, 5, 14), mains: [7, 19, 28, 33, 45], stars: [3, 9] }],
+    euro
+  );
+  assert(euroCsv.split("\n")[0] === "date,n1,n2,n3,n4,n5,star1,star2", "CSV: euro header");
+  assert(euroCsv.split("\n")[1] === "2024-06-14,7,19,28,33,45,3,9", "CSV: euro row with stars and date");
+  const back = parseDraws(euroCsv, euro);
+  assert(back.length === 1 && back[0].stars.join(",") === "3,9", "CSV: euro round-trip");
+}
 
 const recent = filterDrawsByYears(draws, 3, new Date(2026, 5, 12));
 assert(recent.length === 2, "filterDrawsByYears keeps only the window");
@@ -92,13 +181,20 @@ function defaultCriteria(cfg) {
     maxRun: { enabled: true, value: 2 },
     oddEven: { enabled: true, minOdd: 2, maxOdd: cfg.mainPick - 2 },
     sumRange: { enabled: true, min: cfg.defaultSumMin, max: cfg.defaultSumMax },
-    zoneSpread: { enabled: true, maxPerZone: 3 },
+    zoneSpread: { enabled: true, maxPerZone: 3, minPerZone: 0 },
+    zonesUsed: { enabled: false, min: 1, max: Math.ceil(cfg.mainMax / cfg.zoneSize) },
+    parityRun: { enabled: true, value: 3 },
+    maxArithmetic: { enabled: true, value: 4 },
+    sameLastDigit: { enabled: true, max: 4 },
+    sharedMultiple: { enabled: true, max: 4 },
+    lowHigh: { enabled: false, minLow: 1, minHigh: 1 },
     birthdayBias: { enabled: false },
     excludeNumbers: { enabled: false, numbers: [] },
     requireNumbers: { enabled: false, numbers: [] },
     batchOverlap: { enabled: true, maxShared: 4 },
     historyExact: { enabled: true },
-    historySubset: { enabled: true }
+    historySubset: { enabled: true },
+    reuseLast: { enabled: false, min: 0, max: 0, numbers: [] }
   };
 }
 
@@ -116,6 +212,10 @@ for (const cfg of [lotto, euro]) {
       const odd = countOdd(t.mains);
       assert(odd >= 2 && odd <= cfg.mainPick - 2, `${cfg.id}: odd/even respected`);
       assert(sumOf(t.mains) >= cfg.defaultSumMin && sumOf(t.mains) <= cfg.defaultSumMax, `${cfg.id}: sum respected`);
+      assert(longestParityRun(t.mains) <= 3, `${cfg.id}: parity streak respected`);
+      assert(longestArithmeticProgression(t.mains) <= 4, `${cfg.id}: pattern guard AP respected`);
+      assert(maxSameLastDigit(t.mains) <= 4, `${cfg.id}: pattern guard last digit respected`);
+      assert(maxSharedDivisor(t.mains) <= 4, `${cfg.id}: pattern guard divisor respected`);
     }
   }
   // batch overlap
@@ -141,9 +241,56 @@ for (const cfg of [lotto, euro]) {
   crit.zoneSpread.enabled = false;
   crit.batchOverlap.enabled = false;
   crit.historySubset.enabled = false;
-  const { tickets } = generateTickets(3, cfg, crit, idx);
-  assert(tickets.length === 3, "tiny pool: still generates");
+  const { tickets } = generateTickets(1, cfg, crit, idx);
+  assert(tickets.length === 1, "tiny pool: still generates");
   assert(tickets.every((t) => t.mains.join("-") === allowed), "exact-row exclusion leaves only the allowed combo");
+  // A coupon never repeats a row, so a second row is impossible here.
+  const two = generateTickets(2, cfg, crit, idx);
+  assert(two.tickets.length === 1 && two.warnings.length === 1, "tiny pool: duplicate row refused with a warning");
+}
+
+/* seed rows (locked rows): new rows respect overlap with them and never duplicate them */
+{
+  const locked = [[3, 9, 17, 21, 25, 28, 31]];
+  const crit = defaultCriteria(lotto);
+  const { tickets } = generateTickets(9, lotto, crit, buildHistoryIndex([], 0), null, locked);
+  assert(tickets.length === 9, "seedRows: generates the remaining rows");
+  assert(tickets.every((t) => overlapCount(t.mains, locked[0]) <= crit.batchOverlap.maxShared),
+    "seedRows: overlap limit applies against locked rows");
+}
+
+/* relaxed rows name the rules they break; rows passing everything are not flagged */
+{
+  const crit = defaultCriteria(lotto);
+  crit.sumRange = { enabled: true, min: 220, max: 238 }; // only the very top rows can pass
+  crit.requireNumbers = { enabled: true, numbers: [1, 2] }; // makes that sum impossible
+  const { tickets } = generateTickets(3, lotto, crit, buildHistoryIndex([], 0));
+  assert(tickets.length === 3, "relaxed: still generates");
+  assert(tickets.every((t) => t.relaxed && t.relaxedRules.some((r) => /sum/.test(r))),
+    "relaxed: rows list the sum rule they had to break");
+  const easy = generateTickets(5, lotto, defaultCriteria(lotto), buildHistoryIndex([], 0));
+  assert(easy.tickets.every((t) => t.relaxed === (t.relaxedRules.length > 0)), "relaxed flag matches named rules");
+}
+
+/* softRuleFailures explains violations */
+{
+  const crit = defaultCriteria(lotto);
+  const fails = softRuleFailures([1, 2, 3, 4, 5, 6, 7], lotto, crit, false);
+  assert(fails.some((f) => /sequence/.test(f)) && fails.some((f) => /sum/.test(f)), "softRuleFailures: names sequence and sum");
+  assert(softRuleFailures([1, 2, 3, 4, 5, 6, 7], lotto, crit, true).length === 1, "softRuleFailures: firstOnly stops early");
+}
+
+/* pass-rate estimate */
+{
+  const loose = estimatePassRate(lotto, defaultCriteria(lotto), buildHistoryIndex([], 0), null, 1500);
+  assert(loose.feasible && loose.rate > 0.02 && loose.rate < 1, `passRate: default settings give a sensible share (${loose.rate.toFixed(3)})`);
+  const none = defaultCriteria(lotto);
+  for (const k of ["maxRun", "oddEven", "sumRange", "zoneSpread", "parityRun", "maxArithmetic", "sameLastDigit", "sharedMultiple"]) none[k].enabled = false;
+  assert(estimatePassRate(lotto, none, buildHistoryIndex([], 0), null, 500).rate === 1, "passRate: no rules means every row passes");
+  const bad = defaultCriteria(lotto);
+  bad.lowHigh = { enabled: true, minLow: 5, minHigh: 5 };
+  const r = estimatePassRate(lotto, bad, buildHistoryIndex([], 0), null, 100);
+  assert(!r.feasible && r.problems.length > 0, "passRate: infeasible settings reported");
 }
 
 /* required + excluded numbers */
@@ -157,12 +304,492 @@ for (const cfg of [lotto, euro]) {
   assert(tickets.every((t) => !t.mains.includes(13) && !t.mains.includes(22)), "excluded numbers absent");
 }
 
+/* zone minimum: every zone must be represented */
+{
+  const crit = defaultCriteria(lotto);
+  crit.zoneSpread = { enabled: true, maxPerZone: 3, minPerZone: 1 };
+  const { tickets } = generateTickets(10, lotto, crit, buildHistoryIndex([], 0));
+  assert(tickets.length === 10, "zone min: generates 10");
+  for (const t of tickets) {
+    if (t.relaxed) continue;
+    const counts = [0, 0, 0, 0];
+    for (const n of t.mains) counts[zoneOfNumber(lotto, n)]++;
+    assert(counts.every((c) => c >= 1), "zone min: every zone of ten represented");
+  }
+}
+
+/* strict parity streak limit */
+{
+  const crit = defaultCriteria(lotto);
+  crit.parityRun = { enabled: true, value: 2 };
+  const { tickets } = generateTickets(10, lotto, crit, buildHistoryIndex([], 0));
+  assert(
+    tickets.filter((t) => !t.relaxed).every((t) => longestParityRun(t.mains) <= 2),
+    "parity: streak limit of 2 enforced"
+  );
+}
+
+/* infeasible zone minimum is reported */
+{
+  const crit = defaultCriteria(lotto);
+  crit.zoneSpread = { enabled: true, maxPerZone: 3, minPerZone: 3 }; // 3 × 4 zones > 7
+  const r = generateTickets(10, lotto, crit, buildHistoryIndex([], 0));
+  assert(r.tickets.length === 0 && r.warnings.length > 0, "infeasible zone min rejected with warning");
+}
+
+/* zone min larger than the last (short) zone is reported */
+{
+  const crit = defaultCriteria(lotto);
+  crit.zoneSpread = { enabled: true, maxPerZone: 7, minPerZone: 5 }; // zone 31–34 has only 4 numbers (also 5×4 > 7)
+  const r = generateTickets(10, lotto, crit, buildHistoryIndex([], 0));
+  assert(r.tickets.length === 0 && r.warnings.some((w) => /31–34/.test(w)), "short-zone minimum rejected with warning");
+}
+
+/* bias weights flow through generation and still respect criteria */
+{
+  const crit = defaultCriteria(lotto);
+  crit.batchOverlap.enabled = false; // boosted numbers should be free to repeat across rows
+  const weights = new Array(35).fill(1);
+  for (let n = 30; n <= 34; n++) weights[n] = 50;
+  const { tickets } = generateTickets(10, lotto, crit, buildHistoryIndex([], 0), weights);
+  assert(tickets.length === 10, "bias: generates 10");
+  assert(tickets.every((t) => t.mains.some((n) => n >= 30)), "bias: every row contains a boosted number");
+  for (const t of tickets) {
+    assert(t.mains.length === 7 && new Set(t.mains).size === 7, "bias: rows stay valid");
+    if (!t.relaxed) assert(longestConsecutiveRun(t.mains) <= 2, "bias: criteria still enforced");
+  }
+}
+
+/* max arithmetic progression length is configurable and enforced */
+{
+  const crit = defaultCriteria(lotto);
+  crit.maxArithmetic = { enabled: true, value: 2 }; // no 3-term equal-gap runs
+  // turn off other style constraints that could mask it
+  crit.sameLastDigit.enabled = false;
+  crit.sharedMultiple.enabled = false;
+  const { tickets } = generateTickets(10, lotto, crit, buildHistoryIndex([], 0));
+  assert(tickets.filter((t) => !t.relaxed).every((t) => longestArithmeticProgression(t.mains) <= 2),
+    "maxArithmetic: 3-term progressions rejected at value 2");
+  const bad = generateTickets(1, lotto, { ...crit, maxArithmetic: { enabled: true, value: 1 } }, buildHistoryIndex([], 0));
+  assert(bad.tickets.length === 0 && bad.warnings.some((w) => /arithmetic/i.test(w)), "maxArithmetic: value < 2 reported");
+}
+
+/* low/high balance forces both halves */
+{
+  const crit = defaultCriteria(lotto);
+  crit.lowHigh = { enabled: true, minLow: 2, minHigh: 2 };
+  const half = Math.ceil(lotto.mainMax / 2); // 17
+  const { tickets } = generateTickets(10, lotto, crit, buildHistoryIndex([], 0));
+  assert(tickets.length === 10, "lowHigh: generates 10");
+  for (const t of tickets) {
+    if (t.relaxed) continue;
+    const low = t.mains.filter((n) => n <= half).length;
+    assert(low >= 2 && t.mains.length - low >= 2, "lowHigh: at least 2 from each half");
+  }
+  const infeasible = generateTickets(10, lotto, { ...crit, lowHigh: { enabled: true, minLow: 4, minHigh: 4 } }, buildHistoryIndex([], 0));
+  assert(infeasible.tickets.length === 0 && infeasible.warnings.some((w) => /Low\/high/.test(w)), "lowHigh: 4+4 > 7 reported");
+}
+
+/* same-last-digit limit is enforced */
+{
+  const crit = defaultCriteria(lotto);
+  crit.sameLastDigit = { enabled: true, max: 2 };
+  const { tickets } = generateTickets(10, lotto, crit, buildHistoryIndex([], 0));
+  assert(tickets.filter((t) => !t.relaxed).every((t) => maxSameLastDigit(t.mains) <= 2),
+    "sameLastDigit: max 2 enforced");
+}
+
+/* reuse-from-last-draw: exact count */
+{
+  const last = [3, 9, 17, 21, 25, 28, 31];
+  const crit = defaultCriteria(lotto);
+  crit.reuseLast = { enabled: true, min: 2, max: 2, numbers: last };
+  const { tickets } = generateTickets(10, lotto, crit, buildHistoryIndex([], 0));
+  assert(tickets.length === 10, "reuse: generates 10");
+  for (const t of tickets) {
+    const shared = t.mains.filter((n) => last.includes(n)).length;
+    assert(shared === 2, `reuse: exactly 2 carried over (got ${shared})`);
+  }
+}
+
+/* reuse-from-last-draw: range 1..3, and 0 means a fresh row */
+{
+  const last = [3, 9, 17, 21, 25, 28, 31];
+  const crit = defaultCriteria(lotto);
+  crit.reuseLast = { enabled: true, min: 1, max: 3, numbers: last };
+  const { tickets } = generateTickets(10, lotto, crit, buildHistoryIndex([], 0));
+  assert(tickets.every((t) => {
+    const s = t.mains.filter((n) => last.includes(n)).length;
+    return s >= 1 && s <= 3;
+  }), "reuse: range 1-3 respected");
+
+  const crit0 = defaultCriteria(lotto);
+  crit0.reuseLast = { enabled: true, min: 0, max: 0, numbers: last };
+  const r0 = generateTickets(10, lotto, crit0, buildHistoryIndex([], 0));
+  assert(r0.tickets.every((t) => t.mains.every((n) => !last.includes(n))), "reuse: 0 means no carry-over");
+}
+
+/* reuse interacts with required numbers (a required number in the last draw counts) */
+{
+  const last = [7, 9, 17, 21, 25, 28, 31];
+  const crit = defaultCriteria(lotto);
+  crit.requireNumbers = { enabled: true, numbers: [7] };
+  crit.reuseLast = { enabled: true, min: 1, max: 1, numbers: last };
+  const { tickets } = generateTickets(10, lotto, crit, buildHistoryIndex([], 0));
+  assert(tickets.length === 10, "reuse+require: generates 10");
+  assert(tickets.every((t) => t.mains.includes(7) && t.mains.filter((n) => last.includes(n)).length === 1),
+    "reuse+require: required last-draw number satisfies the single reuse slot");
+}
+
+/* infeasible reuse is reported */
+{
+  const crit = defaultCriteria(lotto);
+  crit.reuseLast = { enabled: true, min: 5, max: 6, numbers: [3, 9, 17] }; // only 3 available
+  const r = generateTickets(10, lotto, crit, buildHistoryIndex([], 0));
+  assert(r.tickets.length === 0 && r.warnings.some((w) => /Reuse from last draw/.test(w)), "reuse: infeasible min reported");
+}
+
 /* infeasible criteria are reported, not looped forever */
 {
   const crit = defaultCriteria(lotto);
   crit.excludeNumbers = { enabled: true, numbers: Array.from({ length: 30 }, (_, i) => i + 1) };
   const { tickets, warnings } = generateTickets(10, lotto, crit, buildHistoryIndex([], 0));
   assert(tickets.length === 0 && warnings.length > 0, "infeasible criteria rejected with warning");
+}
+
+/* ---- ISO weeks ---- */
+{
+  const w = (y, m, d) => { const r = isoWeekOf(new Date(y, m - 1, d)); return `${r.year}-W${r.week}`; };
+  assert(w(2024, 1, 1) === "2024-W1", "isoWeek: 2024-01-01 is W1");
+  assert(w(2021, 1, 3) === "2020-W53", "isoWeek: 2021-01-03 belongs to 2020-W53");
+  assert(w(2026, 11, 5) === "2026-W45", "isoWeek: 2026-11-05 is W45");
+  assert(w(2024, 12, 30) === "2025-W1", "isoWeek: 2024-12-30 is 2025-W1");
+  assert(isoWeeksInYear(2020) === 53 && isoWeeksInYear(2024) === 52, "isoWeeksInYear");
+  const ws = isoWeekStart(2026, 45);
+  assert(ws.getFullYear() === 2026 && ws.getMonth() === 10 && ws.getDate() === 2 && ws.getDay() === 1, "isoWeekStart: 2026-W45 starts Monday 2 Nov");
+  assert(isoDateKey(new Date(2026, 0, 5)) === "2026-01-05", "isoDateKey");
+}
+
+/* ---- schedule / expected draws ---- */
+{
+  assert(expectedDrawsInWeek(euro, isoWeekStart(2022, 12)) === 1, "euro: W12 2022 expects one draw");
+  assert(expectedDrawsInWeek(euro, isoWeekStart(2022, 13)) === 2, "euro: W13 2022 (Tue 29 Mar) expects two draws");
+  assert(expectedDrawsInWeek(euro, isoWeekStart(2011, 10)) === 0, "euro: before launch expects none");
+  assert(expectedDrawsInWeek(lotto, isoWeekStart(2024, 10)) === 1, "lotto: one draw per week");
+  // Range starting on a Sunday: that week has no draw day left inside the range.
+  assert(expectedDrawsInWeek(euro, isoWeekStart(2023, 44), new Date(2023, 10, 5)) === 0, "euro: week cut off by a Sunday range start expects none");
+  assert(expectedDrawsInWeek(lotto, isoWeekStart(2024, 10), new Date(2024, 2, 8)) === 1, "lotto: range starting Friday still expects Saturday's draw");
+  // Current week on a Wednesday: Tuesday's draw expected so far, Friday's not yet.
+  assert(expectedDrawsInWeek(euro, isoWeekStart(2024, 10), null, new Date(2024, 2, 6)) === 1, "euro: only Tuesday counted up to Wednesday");
+  assert(expectedDrawsInWeek(lotto, isoWeekStart(2012, 12)) === 1 && expectedDrawsInWeek(euro, isoWeekStart(2012, 12)) === 1, "launch week: only draw days after launch");
+}
+
+/* ---- coverage ---- */
+{
+  const mk = (iso, src) => ({ date: new Date(iso), mains: [1, 2, 3, 4, 5, 6, 7], stars: [], source: src });
+  const draws = [mk("2024-03-02", "nt-api-v2"), mk("2024-03-09", "bundled-csv"), mk("2024-03-23", "nt-api-v2")];
+  const used = new Set(["2024-03-09", "2024-03-23"]);
+  const cov = coverageByWeek(draws, lotto, new Date(2024, 1, 26), new Date(2024, 2, 24), used, new Date(2024, 2, 25));
+  const weeks = cov.years[0].weeks;
+  assert(cov.years.length === 1 && weeks.length === 4, `coverage: 4 ISO weeks W9–W12 in range (${weeks.length})`);
+  assert(weeks.map((w) => w.status).join(",") === "complete,complete,missing,complete", "coverage: statuses " + weeks.map((w) => w.status).join(","));
+  assert(weeks[0].used === 0 && weeks[1].used === 1, "coverage: used flags follow usedKeys");
+  assert(cov.totals.missing === 1 && cov.totals.complete === 3 && cov.totals.usedWeeks === 2, "coverage: totals");
+  assert(cov.totals.bySource["nt-api-v2"] === 2 && cov.totals.bySource["bundled-csv"] === 1, "coverage: per-source week counts");
+  const fut = coverageByWeek([], lotto, new Date(2024, 2, 18), new Date(2024, 3, 7), null, new Date(2024, 2, 25));
+  assert(fut.years[0].weeks.map((w) => w.status).join(",") === "missing,pending,future", "coverage: current week is pending, later weeks future (" + fut.years[0].weeks.map((w) => w.status).join(",") + ")");
+  // Current week whose draw day has passed without a draw is missing, not pending (today = Sunday 31 Mar 2024, W13 Saturday draw absent).
+  const sat = coverageByWeek([], lotto, new Date(2024, 2, 25), new Date(2024, 2, 31), null, new Date(2024, 2, 31));
+  assert(sat.years[0].weeks[0].status === "missing", "coverage: current week is missing once its draw day has passed (" + sat.years[0].weeks[0].status + ")");
+  // Range starting on a Sunday does not create a phantom missing week.
+  const sun = coverageByWeek([{ date: new Date(2023, 10, 7), mains: [1,2,3,4,5], stars: [1,2], source: "x" }], euro, new Date(2023, 10, 5), new Date(2023, 10, 12), null, new Date(2023, 10, 13));
+  assert(sun.years[0].weeks.map((w) => w.status).join(",") === "before-launch,partial", "coverage: Sunday range start week has no expected draws (" + sun.years[0].weeks.map((w) => w.status).join(",") + ")");
+  // Eurojackpot partial week after the Tuesday draw was added
+  const ej = [{ date: new Date(2022, 3, 1), mains: [1, 2, 3, 4, 5], stars: [1, 2], source: "x" }];
+  const c2 = coverageByWeek(ej, euro, new Date(2022, 2, 28), new Date(2022, 3, 3), null, new Date(2022, 3, 4));
+  assert(c2.years[0].weeks[0].status === "partial", "coverage: one of two Eurojackpot draws is partial");
+}
+
+/* ---- Norsk Tipping v2 parser ---- */
+{
+  const resp = { gameResult: [
+    { drawDate: "2024-03-16T19:00:00.000+01:00", drawId: 1900, turnover: "1", prize: [],
+      winnerNumber: [19, 5, 31, 12, 1, 28, 23].map((n, i) => ({ number: String(n), type: 1, drawOrder: i + 1 })).concat([{ number: "9", type: 2, drawOrder: 8 }]) },
+    { drawDate: "2024-03-09", drawId: 1899, winnerNumber: [2, 6, 11, 18, 22, 27, 30].map((n, i) => ({ number: n, type: 1, drawOrder: i + 1 })) }
+  ] };
+  const d = parseNorskTippingV2(resp, lotto, "nt-api-v2");
+  assert(d.length === 2, "v2: two draws");
+  assert(d[0].mains.join(",") === "1,5,12,19,23,28,31" && d[0].drawOrder.join(",") === "19,5,31,12,1,28,23", "v2: sorted mains + draw order");
+  assert(d[0].bonus.join(",") === "9" && d[0].stars.length === 0 && d[0].source === "nt-api-v2" && d[0].drawId === 1900, "v2: lotto bonus kept separately");
+  const ejResp = [{ drawDate: "2024-06-14", winnerNumber: [[7,1],[19,1],[28,1],[33,1],[45,1],[3,2],[9,2]].map(([n, t], i) => ({ number: n, type: t, drawOrder: i + 1 })) }];
+  const e = parseNorskTippingV2(ejResp, euro, "nt-api-v2");
+  assert(e.length === 1 && e[0].stars.join(",") === "3,9", "v2: eurojackpot stars from type 2");
+  assert(parseNorskTippingV2({ foo: "bar" }, lotto).length === 0, "v2: unknown shape yields nothing");
+}
+
+/* ---- header CSV parser (collector + eonurk formats) ---- */
+{
+  const tool = "game,draw_date,iso_year,iso_week,draw_id,main_numbers,main_numbers_draw_order,bonus_numbers,prize_tiers_json,turnover_nok,source,source_url,fetched_at,validation_status,validation_notes,row_hash\n" +
+    "lotto,2024-03-02,2024,9,,3 7 13 20 24 29 33,,4,,,manuell,,2026-11-05T16:57:36+00:00,ok,,a9744e983af654dd\n" +
+    "eurojackpot,2024-03-01,2024,9,,1 2 3 4 5,,6 7,,,x,,,ok,,\n";
+  const l = parseHeaderCsv(tool, lotto, "bundled-csv");
+  assert(l.length === 1 && l[0].mains.join(",") === "3,7,13,20,24,29,33" && l[0].bonus.join(",") === "4" && l[0].source === "manuell", "headerCsv: collector format, filtered by game, iso_week not misread");
+  const eo = 'draw_date,main_numbers,euro_numbers\n2025-02-25,"28,31,38,42,48","3,10"\n2012-03-23,"5,8,21,37,46","6,8"\n';
+  const e = parseHeaderCsv(eo, euro, "thirdparty-csv");
+  assert(e.length === 2 && e[0].stars.join(",") === "3,10" && e[1].date.getFullYear() === 2012 && e[0].source === "thirdparty-csv", "headerCsv: eonurk format");
+  assert(parseHeaderCsv("16.03.2024 1 5 12 19 23 28 31", lotto).length === 0, "headerCsv: plain text is not claimed");
+}
+
+/* ---- merge by date with conflicts ---- */
+{
+  const a = [{ date: new Date(2024, 2, 2), mains: [1,2,3,4,5,6,7], stars: [], source: "nt-api-v2" }];
+  const b = [{ date: new Date(2024, 2, 2), mains: [1,2,3,4,5,6,8], stars: [], source: "csv" },
+             { date: new Date(2024, 2, 9), mains: [1,2,3,4,5,6,9], stars: [], source: "csv" }];
+  const m = mergeDrawsByDate(a, b);
+  assert(m.draws.length === 2 && m.added === 1 && m.conflicts.length === 1 && m.draws[0].source === "nt-api-v2", "merge: earlier source wins, conflict reported");
+}
+
+/* ---- freshness ---- */
+{
+  // Newest Lotto draw Fri 5 Jun 2026 (odd, but that is what the user had); today Thu 5 Nov 2026 → 22 Saturdays.
+  assert(drawsExpectedBetween(lotto, new Date(2026, 5, 5), new Date(2026, 10, 5)) === 22, "freshness: 22 Saturday draws missed");
+  assert(drawsExpectedBetween(lotto, new Date(2026, 10, 1), new Date(2026, 10, 5)) === 0, "freshness: up to date mid-week");
+  assert(drawsExpectedBetween(euro, new Date(2026, 10, 2), new Date(2026, 10, 5)) === 1, "freshness: Tuesday draw missed, Friday not yet");
+  assert(drawsExpectedBetween(euro, new Date(2026, 10, 5), new Date(2026, 10, 1)) === 0, "freshness: reversed range is zero");
+}
+
+/* ---- possibility space ---- */
+{
+  const none = (cfg) => {
+    const c = defaultCriteria(cfg);
+    for (const k of ["maxRun", "oddEven", "sumRange", "zoneSpread", "parityRun", "maxArithmetic", "sameLastDigit", "sharedMultiple", "lowHigh", "birthdayBias"]) c[k].enabled = false;
+    c.batchOverlap.enabled = false; c.historyExact.enabled = false; c.historySubset.enabled = false;
+    return c;
+  };
+  const hx = buildHistoryIndex([], 0);
+  assert(jackpotCombinations(lotto) === 5379616 && jackpotCombinations(euro) === 139838160, "space: jackpot combinations");
+  const all = estimateSpace(lotto, none(lotto), hx);
+  assert(all.exact && all.count === 5379616 && all.share === 1, "space: no rules → every row, exact");
+  const eAll = estimateSpace(euro, none(euro), hx);
+  assert(eAll.count === 139838160, "space: eurojackpot includes star combinations");
+
+  // Excluding two numbers shrinks the space exactly: C(32,7)
+  const ex = none(lotto); ex.excludeNumbers = { enabled: true, numbers: [13, 22] };
+  const exR = estimateSpace(lotto, ex, hx);
+  assert(exR.exact && exR.count === binomial(32, 7), "space: excluded numbers shrink space exactly (" + exR.count + ")");
+
+  // Exact enumeration of a small space matches an independent count (max run 2, four required numbers)
+  const req = none(lotto); req.requireNumbers = { enabled: true, numbers: [1, 10, 20, 30] }; req.maxRun = { enabled: true, value: 2 };
+  const reqR = estimateSpace(lotto, req, hx);
+  let manual = 0;
+  const rest = []; for (let n = 1; n <= 34; n++) if (![1, 10, 20, 30].includes(n)) rest.push(n);
+  for (let a = 0; a < rest.length; a++) for (let b = a + 1; b < rest.length; b++) for (let c = b + 1; c < rest.length; c++) {
+    const row = [1, 10, 20, 30, rest[a], rest[b], rest[c]].sort((x, y) => x - y);
+    if (longestConsecutiveRun(row) <= 2) manual++;
+  }
+  assert(reqR.exact && reqR.count === manual, `space: exact enumeration matches independent count (${reqR.count} vs ${manual})`);
+
+  // Monte-Carlo estimate lands near the exact answer for max-run ≤ 2 (count known: rows with no 3 consecutive)
+  const mc = none(lotto); mc.maxRun = { enabled: true, value: 2 };
+  const mcR = estimateSpace(lotto, mc, hx, 40000);
+  // exact count via dynamic programming over runs
+  const exactNoTriple = (() => { let c = 0; const rows = []; (function rec(start, row) { if (row.length === 7) { if (longestConsecutiveRun(row) <= 2) c++; return; } for (let n = start; n <= 34; n++) { row.push(n); rec(n + 1, row); row.pop(); } })(1, rows); return c; })();
+  assert(!mcR.exact && mcR.lo <= exactNoTriple && exactNoTriple <= mcR.hi, `space: MC interval [${Math.round(mcR.lo)}, ${Math.round(mcR.hi)}] contains exact ${exactNoTriple}`);
+  assert(mcR.share < 1 && mcR.share > 0.3, "space: rule reduces the share");
+
+  // Infeasible rules are reported, adding rules never increases the count
+  const bad = none(lotto); bad.lowHigh = { enabled: true, minLow: 5, minHigh: 5 };
+  assert(!estimateSpace(lotto, bad, hx).feasible, "space: conflict reported");
+  const more = none(lotto); more.maxRun = { enabled: true, value: 2 }; more.oddEven = { enabled: true, minOdd: 3, maxOdd: 4 };
+  assert(estimateSpace(lotto, more, hx, 40000).count < mcR.count, "space: an extra rule lowers the count");
+}
+
+/* ---- rule breakdown (funnel) ---- */
+{
+  const hx = buildHistoryIndex([], 0);
+  const c = defaultCriteria(lotto);
+  const bd = ruleBreakdown(lotto, c, hx, 40000);
+  assert(bd.feasible && bd.steps.length >= 5, "breakdown: lists the active rules (" + bd.steps.length + ")");
+  assert(bd.steps.every((s, i) => s.cumulative <= (i ? bd.steps[i - 1].cumulative : 1) + 1e-12), "breakdown: cumulative share never increases");
+  assert(bd.steps.every((s) => s.solo >= s.cumulative - 1e-12), "breakdown: a rule alone keeps at least as much as the cumulative");
+  const sp = estimateSpace(lotto, c, hx, 40000);
+  assert(Math.abs(bd.share - sp.share) < 0.02, `breakdown: final share ${bd.share.toFixed(3)} agrees with estimateSpace ${sp.share.toFixed(3)}`);
+  assert(ruleCatalog(lotto, c, hx).length === 14 && ruleCatalog(lotto, c, hx).some((r) => !r.enabled), "breakdown: catalogue lists all 14 rules incl. disabled");
+  // exact small space: required numbers + maxRun
+  const req = defaultCriteria(lotto);
+  for (const k of ["oddEven", "sumRange", "zoneSpread", "parityRun", "maxArithmetic", "sameLastDigit", "sharedMultiple"]) req[k].enabled = false;
+  req.requireNumbers = { enabled: true, numbers: [1, 10, 20, 30] };
+  const rb = ruleBreakdown(lotto, req, hx);
+  assert(rb.exact && rb.constrainedMain === binomial(30, 3), "breakdown: required numbers shrink space exactly");
+  const none = defaultCriteria(lotto);
+  for (const k of ["maxRun", "oddEven", "sumRange", "zoneSpread", "parityRun", "maxArithmetic", "sameLastDigit", "sharedMultiple", "lowHigh", "birthdayBias"]) none[k].enabled = false;
+  none.historyExact.enabled = false; none.historySubset.enabled = false;
+  const nb = ruleBreakdown(lotto, none, hx);
+  assert(nb.steps.length === 0 && nb.share === 1 && nb.count === 5379616, "breakdown: no rules → full space");
+}
+
+/* ---- backtest against past draws ---- */
+{
+  const mk = (iso, mains) => ({ date: new Date(iso), mains, stars: [], source: "x" });
+  const draws = [
+    mk("2024-01-06", [1, 2, 3, 10, 20, 25, 30]),   // run of 3 → breaks maxRun 2
+    mk("2024-01-13", [4, 9, 14, 19, 24, 29, 33]),  // fine; shares 0 with previous
+    mk("2024-01-20", [4, 9, 15, 21, 26, 31, 34]),  // shares 2 with previous
+    mk("2024-01-27", [5, 8, 12, 17, 22, 27, 32])   // shares 0
+  ];
+  const c = defaultCriteria(lotto);
+  for (const k of ["oddEven", "sumRange", "zoneSpread", "parityRun", "maxArithmetic", "sameLastDigit", "sharedMultiple"]) c[k].enabled = false;
+  c.maxRun = { enabled: true, value: 2 };
+  c.excludeNumbers = { enabled: true, numbers: [34] };
+  c.requireNumbers = { enabled: false, numbers: [4] };
+  c.reuseLast = { enabled: true, min: 1, max: 3, numbers: [] };
+  const r = historicalImpact(lotto, c, draws);
+  assert(r.total === 4 && r.rules.maxRun.tested === 4 && r.rules.maxRun.failed === 1, "backtest: maxRun filters exactly the draw with 3 in a row");
+  assert(r.rules.excludeNumbers.failed === 1 && r.rules.excludeNumbers.enabled, "backtest: excluded number 34 appeared once");
+  assert(r.rules.requireNumbers.failed === 2 && !r.rules.requireNumbers.enabled, "backtest: disabled rule still previewed (requiring 4 fails 2 draws)");
+  assert(r.rules.reuseLast.tested === 3 && r.rules.reuseLast.failed === 2, "backtest: reuse judged against the previous draw (" + r.rules.reuseLast.failed + " of 3 outside 1–3)");
+  // draw1 fails maxRun; draw2 fails reuse(0); draw3 fails exclude(34); draw4 fails reuse(0) → none pass
+  assert(r.allPass === 0, "backtest: allPass counts draws passing every enabled rule (" + r.allPass + ")");
+  c.reuseLast.enabled = false; c.excludeNumbers.enabled = false;
+  assert(historicalImpact(lotto, c, draws).allPass === 3, "backtest: with only maxRun on, 3 of 4 pass");
+  assert(historicalImpact(lotto, c, []).total === 0, "backtest: empty history");
+}
+
+/* ---- failure diagnosis & rule strictness ---- */
+{
+  // Tiny game: 3 of 5. History contains every combination except 1-3-5 → exact-row rule rejects 9 of 10.
+  const cfg = { ...lotto, mainPick: 3, mainMax: 5, defaultSumMin: 0, defaultSumMax: 999 };
+  const all = combinationKeys([1, 2, 3, 4, 5], 3).map((k) => k.split("-").map(Number)).filter((c) => c.join("-") !== "1-3-5");
+  const hx = buildHistoryIndex(all.map((mains) => ({ date: null, mains, stars: [] })), 0);
+  const crit = defaultCriteria(cfg);
+  for (const k of ["maxRun", "oddEven", "sumRange", "zoneSpread", "parityRun", "maxArithmetic", "sameLastDigit", "sharedMultiple"]) crit[k].enabled = false;
+  crit.batchOverlap.enabled = false; crit.historySubset.enabled = false; crit.historyExact.enabled = true;
+  const d = diagnoseRejections(cfg, crit, hx, [], null, 2000);
+  const ex = d.rules.find((r) => r.id === "historyExact");
+  assert(ex && ex.kind === "hard" && ex.share > 0.85 && ex.share < 0.95 && ex.sole === ex.share, `diagnose: exact-history rule rejects ~90 % and is the sole blocker (${ex && ex.share})`);
+  assert(d.passAll > 0.05 && d.passAll < 0.15, "diagnose: about 10 % of candidates pass everything (" + d.passAll + ")");
+  assert(d.rules[0].id === "historyExact", "diagnose: rules sorted by rejection share");
+  // overlap rule counts against earlier rows
+  crit.historyExact.enabled = false; crit.batchOverlap = { enabled: true, maxShared: 0 };
+  const d2 = diagnoseRejections(cfg, crit, hx, [[1, 2, 3]], null, 2000);
+  const ov = d2.rules.find((r) => r.id === "batchOverlap");
+  assert(ov && ov.kind === "hard" && ov.share > 0.85, `diagnose: overlap rule rejects rows sharing numbers with row 1 (${ov && ov.share})`);
+  // generateTickets surfaces a diagnosis when it fails
+  crit.batchOverlap.enabled = false; crit.historyExact.enabled = true;
+  const gen = generateTickets(2, cfg, crit, hx);
+  assert(gen.tickets.length === 1 && gen.diagnosis && gen.diagnosis.failedRow === 2, "generate: failure on row 2 carries a diagnosis");
+  assert(generateTickets(3, lotto, defaultCriteria(lotto), buildHistoryIndex([], 0)).diagnosis === null, "generate: no diagnosis when everything succeeds");
+
+  // Strictness of maxRun ≤ 2 on Lotto: ~15.8 % of all rows rejected
+  const st = ruleStrictness(lotto, defaultCriteria(lotto), buildHistoryIndex([], 0), 8000);
+  assert(st.maxRun > 0.12 && st.maxRun < 0.20, "strictness: maxRun ≤ 2 rejects ≈16 % (" + st.maxRun.toFixed(3) + ")");
+  assert(st.historyExact === undefined, "strictness: history rules omitted without history");
+  const h2 = buildHistoryIndex([{ date: null, mains: [1, 2, 3, 4, 5, 6, 7], stars: [] }], 0);
+  assert(ruleStrictness(lotto, defaultCriteria(lotto), h2, 500).historyExact === 0, "strictness: one past row rejects ~0 % of rows");
+}
+
+/* ---- overlap acceptance ---- */
+{
+  const o0 = overlapAcceptance(lotto, 0, 10);
+  assert(Math.abs(o0.one - binomial(27, 7) / binomial(34, 7)) < 1e-12, "overlap: P(no shared number) = C(27,7)/C(34,7)");
+  assert(o0.last < 1e-6, "overlap: 10 rows with no shared numbers is practically impossible (" + o0.last + ")");
+  assert(Math.abs(overlapAcceptance(lotto, 7, 10).last - 1) < 1e-12, "overlap: allowing 7 shared never restricts");
+  assert(overlapAcceptance(lotto, 4, 10).last > 0.9, "overlap: default ≤4 hardly restricts");
+}
+
+/* ---- lower / higher half weighting ---- */
+{
+  assert(halfWeights(lotto, 0) === null, "half: neutral gives no weights");
+  const lo = halfWeights(lotto, -100);
+  assert(lo[1] === 9 && lo[17] === 9 && lo[18] === 1 && lo[34] === 1, "half: -100 boosts 1–17 by 9x");
+  const hi = halfWeights(lotto, 50);
+  assert(hi[18] === 5 && hi[17] === 1, "half: +50 boosts the higher half by 5x");
+  const neutral = expectedLowCount(lotto, null, 4000);
+  const favLow = expectedLowCount(lotto, lo, 4000);
+  const favHigh = expectedLowCount(lotto, halfWeights(lotto, 100), 4000);
+  assert(Math.abs(neutral - 3.5) < 0.15, "half: neutral averages 3.5 lower-half numbers (" + neutral.toFixed(2) + ")");
+  assert(favLow > 5.3 && favHigh < 1.7, `half: sliders move the average (${favLow.toFixed(2)} low / ${favHigh.toFixed(2)} high)`);
+  const mid = expectedLowCount(lotto, halfWeights(lotto, -30), 4000);
+  assert(mid > neutral + 0.4 && mid < favLow, "half: a smaller slider value gives a smaller lean (" + mid.toFixed(2) + ")");
+}
+
+/* ---- best guess from past draws ---- */
+{
+  assert(deriveBestGuess(lotto, [], 0.95) === null, "bestGuess: too few draws → null");
+  // Deterministic, balanced history: alternating draws with known properties
+  const base = [];
+  for (let i = 0; i < 120; i++) {
+    const shift = i % 10;
+    const m = [2, 7, 12, 17, 22, 27, 32].map((n) => ((n + shift * 3) % 34) + 1);
+    base.push({ date: new Date(2020, 0, 1 + i * 7), mains: [...new Set(m)].sort((a, b) => a - b).slice(0, 7), stars: [] });
+  }
+  const g = deriveBestGuess(lotto, base, 0.95);
+  assert(g && g.n === 120 && g.settings["crit-maxrun"] === true, "bestGuess: derives settings from 120 draws");
+  const covered = (id, test) => base.filter(test).length / base.length;
+  const sumsOk = covered("sum", (d) => { const s = d.mains.reduce((a, b) => a + b, 0); return s >= g.settings["crit-sum-min"] && s <= g.settings["crit-sum-max"]; });
+  assert(sumsOk >= 0.94, "bestGuess: the sum range lets ≥ 95 % of past draws through (" + sumsOk + ")");
+  const runOk = covered("run", (d) => longestConsecutiveRun(d.mains) <= g.settings["crit-maxrun-value"]);
+  assert(runOk >= 0.95, "bestGuess: max run covers the past draws (" + runOk + ")");
+  const oddOk = covered("odd", (d) => { const o = countOdd(d.mains); return o >= g.settings["crit-oddeven-min"] && o <= g.settings["crit-oddeven-max"]; });
+  assert(oddOk >= 0.9, "bestGuess: odd range covers the past draws (" + oddOk + ")");
+  assert(g.settings["bias-half"] === false && g.settings["hist-subset"] === false && g.settings["bias-overdue"] === false, "bestGuess: no lean, no overdue/cold weighting, no subset rule");
+  assert(g.notes.length >= 6 && g.notes.every((n) => typeof n === "string"), "bestGuess: explains what it set");
+  // A history that strongly favours high numbers → positive slider
+  const highDraws = [];
+  for (let i = 0; i < 100; i++) {
+    const m = [...new Set([1 + (i % 3), 18 + (i % 4), 22 + (i % 3), 26 + (i % 4), 30 + (i % 2), 32 + (i % 3), 34])].slice(0, 7);
+    while (m.length < 7) m.push(10 + m.length);
+    highDraws.push({ date: new Date(2020, 0, 1 + i * 7), mains: [...new Set(m)].sort((a, b) => a - b).slice(0, 7), stars: [] });
+  }
+  const gh = deriveBestGuess(lotto, highDraws, 0.95);
+  assert(gh.settings["bias-half"] === true && gh.settings["bias-half-value"] > 0, "bestGuess: draws leaning high → positive slider (" + gh.settings["bias-half-value"] + ")");
+}
+
+/* ---- zones used per row ---- */
+{
+  const hx = buildHistoryIndex([], 0);
+  // Small game: 3 of 12 with zones of 4 → 3 zones, 220 rows — enumerated exactly.
+  const mini = { ...lotto, mainPick: 3, mainMax: 12, zoneSize: 4, starPick: 0, starMax: 0, defaultSumMin: 0, defaultSumMax: 999 };
+  const mk = (min, max) => {
+    const c = defaultCriteria(mini);
+    for (const k of ["maxRun", "oddEven", "sumRange", "zoneSpread", "parityRun", "maxArithmetic", "sameLastDigit", "sharedMultiple"]) c[k].enabled = false;
+    c.batchOverlap.enabled = false; c.historyExact.enabled = false; c.historySubset.enabled = false;
+    c.zonesUsed = { enabled: true, min, max };
+    return c;
+  };
+  const brute = (min, max) => { let n = 0; for (let a = 1; a <= 12; a++) for (let b = a + 1; b <= 12; b++) for (let c = b + 1; c <= 12; c++) { const z = new Set([a, b, c].map((x) => Math.floor((x - 1) / 4))).size; if (z >= min && z <= max) n++; } return n; };
+  for (const [mn, mx] of [[1, 1], [1, 2], [2, 2], [2, 3], [3, 3]]) {
+    const r = estimateSpace(mini, mk(mn, mx), hx);
+    assert(r.exact && r.count === brute(mn, mx), `zonesUsed ${mn}–${mx}: exact count ${r.count} equals brute force ${brute(mn, mx)}`);
+  }
+  assert(softRuleFailures([1, 2, 3, 4, 5, 6, 7], lotto, { ...defaultCriteria(lotto), zonesUsed: { enabled: true, min: 2, max: 3 } }, false).some((f) => /zones used/.test(f)), "zonesUsed: a row in one zone fails 2–3 and is named");
+  assert(softRuleFailures([1, 11, 21, 31, 2, 12, 22], lotto, { ...defaultCriteria(lotto), zonesUsed: { enabled: true, min: 1, max: 3 } }, false).some((f) => /zones used/.test(f)), "zonesUsed: touching all four zones fails max 3");
+  // Generated rows obey it
+  const c = defaultCriteria(lotto); c.zoneSpread.enabled = false; c.zonesUsed = { enabled: true, min: 2, max: 2 };
+  // (with the default "max 3 per zone", 2 zones hold only 6 of 7 numbers — reported as a conflict, tested below)
+  const rows = generateTickets(10, lotto, c, hx).tickets.filter((t) => !t.relaxed);
+  assert(rows.length >= 9 && rows.every((t) => new Set(t.mains.map((n) => Math.floor((n - 1) / 10))).size === 2), "zonesUsed: generated rows touch exactly 2 zones");
+  // Conflicts
+  const bad = (z, extra) => { const x = defaultCriteria(lotto); x.zonesUsed = { enabled: true, ...z }; Object.assign(x, extra || {}); return estimateSpace(lotto, x, hx); };
+  assert(!bad({ min: 3, max: 2 }).feasible, "zonesUsed: min > max reported");
+  assert(!bad({ min: 5, max: 5 }).feasible, "zonesUsed: more zones than exist reported");
+  assert(!bad({ min: 1, max: 2 }).feasible, "zonesUsed: 2 zones × the default max 3 per zone cannot hold 7 numbers");
+  assert(!bad({ min: 1, max: 1 }, { zoneSpread: { enabled: true, maxPerZone: 3, minPerZone: 0 } }).feasible, "zonesUsed: 1 zone × 3 per zone cannot hold 7 numbers");
+  assert(!bad({ min: 1, max: 2 }, { zoneSpread: { enabled: true, maxPerZone: 5, minPerZone: 1 } }).feasible, "zonesUsed: contradicts 'every zone must be used'");
+  assert(!bad({ min: 1, max: 1 }, { requireNumbers: { enabled: true, numbers: [1, 15] } }).feasible, "zonesUsed: required numbers already touch too many zones");
+  // Strictness is reported
+  const st = ruleStrictness(lotto, (() => { const x = defaultCriteria(lotto); x.zoneSpread.enabled = false; x.zonesUsed = { enabled: true, min: 1, max: 2 }; return x; })(), hx, 4000);
+  assert(st.zonesUsed > 0.5 && st.zonesUsed < 1, "zonesUsed: max 2 of 4 zones is a strict rule (" + st.zonesUsed.toFixed(2) + ")");
+  // Best guess includes it
+  const hist = []; for (let i = 0; i < 60; i++) { const m = i % 2 ? [1 + (i % 3), 5 + (i % 3), 12 + (i % 3), 17 + (i % 3), 22 + (i % 4), 27 + (i % 3), 31] : [2 + (i % 3), 6 + (i % 3), 13 + (i % 3), 18 + (i % 3), 23 + (i % 3), 26 + (i % 3), 29]; hist.push({ date: new Date(2020, 0, 1 + i * 7), mains: m.slice().sort((a, b) => a - b), stars: [] }); }
+  const g = deriveBestGuess(lotto, hist, 0.95);
+  assert(g && g.settings["crit-zonesused"] === true && g.settings["crit-zonesused-min"] === 3 && g.settings["crit-zonesused-max"] === 4, "bestGuess: zones used 3–4 from past draws (" + (g && g.settings["crit-zonesused-min"] + "–" + g.settings["crit-zonesused-max"]) + ")");
+}
+
+/* ---- windows ---- */
+{
+  const w = windowsNewestFirst(new Date(2024, 0, 1), new Date(2024, 11, 31), 104);
+  assert(w.length === 4 && isoDateKey(w[0].to) === "2024-12-31" && isoDateKey(w[0].from) === "2024-09-18" && isoDateKey(w[3].from) === "2024-01-01", "windows: newest first, clipped to range");
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

@@ -3,11 +3,13 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="build" content="a90e613" />
   <title>LykkeTall — Smart Lottery Number Picker</title>
-  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="styles.css?v=3524c370" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='45' fill='%23e8336d'/><text x='50' y='64' font-size='44' text-anchor='middle' fill='white' font-family='Arial'>7</text></svg>" />
 </head>
 <body data-lottery="lotto">
+  <a class="skip-link" href="#btn-generate">Skip to number generator</a>
 
   <header class="app-header">
     <div class="brand">
@@ -17,6 +19,10 @@
         <p class="tagline">Smart lottery number picker</p>
       </div>
     </div>
+    <nav class="view-tabs" role="tablist" aria-label="View">
+      <button type="button" id="tab-picker" class="view-tab active" role="tab" aria-selected="true" aria-controls="picker-view">Picker</button>
+      <button type="button" id="tab-dashboard" class="view-tab" role="tab" aria-selected="false" aria-controls="dashboard-view" tabindex="-1">Dashboard</button>
+    </nav>
     <div class="lottery-switch" role="tablist" aria-label="Lottery system">
       <button id="switch-lotto" class="switch-btn active" role="tab" aria-selected="true">
         <span class="dot dot-lotto"></span> Norsk Lotto
@@ -27,16 +33,60 @@
         <small>5 of 50 + 2 stars</small>
       </button>
     </div>
+    <div class="topbar-filter" id="topbar-filter" role="status" aria-label="Total filtering from all rules" data-state="busy">
+      <div class="tf-main">
+        <span class="tf-label">Total filtering</span>
+        <strong class="tf-out" id="tf-out">—</strong>
+        <span class="tf-unit">rows removed</span>
+        <strong class="tf-pct" id="tf-pct">—</strong>
+      </div>
+      <div class="tf-bar" aria-hidden="true"><div class="tf-bar-keep" id="tf-bar-keep"></div></div>
+      <div class="tf-rest"><b id="tf-keep">—</b> of <span id="tf-total">—</span> rows remain <span id="tf-keep-pct"></span></div>
+    </div>
   </header>
 
-  <main class="layout">
+  <main class="layout" id="picker-view" role="tabpanel" aria-labelledby="tab-picker">
 
     <!-- ============ SIDEBAR: criteria + history ============ -->
-    <aside class="sidebar">
+    <aside class="sidebar" aria-label="Settings">
 
-      <section class="panel">
-        <h2><span class="panel-icon">⚙</span> Selection criteria</h2>
-        <p class="panel-hint">Toggle the rules each generated row must satisfy.</p>
+      <section class="panel quick-panel" aria-labelledby="quick-title">
+        <h2 id="quick-title"><span class="panel-icon" aria-hidden="true">🚀</span> Quick setup</h2>
+        <p class="panel-hint">Pick a style to start — every rule below can still be fine-tuned.</p>
+        <div class="preset-chips" role="group" aria-label="Number style presets">
+          <button type="button" class="chip" data-preset="balanced" aria-pressed="false">Balanced</button>
+          <button type="button" class="chip" data-preset="contrarian" aria-pressed="false">Contrarian</button>
+          <button type="button" class="chip" data-preset="weighted" aria-pressed="false">Overdue &amp; rare</button>
+          <button type="button" class="chip" data-preset="random" aria-pressed="false">Pure random</button>
+          <button type="button" class="chip chip-wide" data-preset="history" aria-pressed="false" title="Sets the rules from how all your loaded past draws actually looked">✨ Best guess from history</button>
+        </div>
+        <ul class="preset-notes" id="preset-notes" hidden></ul>
+        <p class="preset-desc" id="preset-desc"></p>
+
+        <div class="strictness" id="strictness">
+          <div class="strictness-head">
+            <span>Rule strictness</span>
+            <span class="strictness-value" id="strictness-value">—</span>
+          </div>
+          <div class="strictness-track" aria-hidden="true"><div class="strictness-fill" id="strictness-fill"></div></div>
+          <p class="mini-hint" id="strictness-text" aria-live="polite"></p>
+          <p class="backtest" id="backtest-text" aria-live="polite"></p>
+        </div>
+
+        <div class="btn-row">
+          <button type="button" id="btn-share" class="btn small ghost">🔗 Copy settings link</button>
+          <button type="button" id="btn-toggle-panels" class="btn small ghost" aria-expanded="false">Expand all</button>
+        </div>
+      </section>
+
+      <details class="panel collapsible" data-panel="balance">
+        <summary>
+          <h2><span class="panel-icon" aria-hidden="true">⚖️</span> Number balance</h2>
+          <span class="panel-count" data-count-for="balance"></span>
+          <span class="chevron" aria-hidden="true"></span>
+        </summary>
+        <div class="panel-body">
+        <p class="panel-hint">Shape how each generated row is distributed.</p>
 
         <div class="criterion">
           <label class="toggle">
@@ -81,10 +131,110 @@
             <span class="slider"></span>
             <span class="toggle-label">Spread across number zones</span>
           </label>
+          <div class="criterion-body two-col" data-for="crit-zone">
+            <label>Max per zone <input type="number" id="crit-zone-max" min="1" max="10" value="3" /></label>
+            <label>Min per zone <input type="number" id="crit-zone-min" min="0" max="10" value="0" /></label>
+          </div>
           <div class="criterion-body" data-for="crit-zone">
-            <label>Max numbers per zone of ten (1–10, 11–20, …)
-              <input type="number" id="crit-zone-max" min="1" max="10" value="3" />
+            <p class="mini-hint">Zones of ten: 1–10, 11–20, … A minimum above 0 forces every zone to be represented.</p>
+          </div>
+        </div>
+
+        <div class="criterion">
+          <label class="toggle">
+            <input type="checkbox" id="crit-zonesused" />
+            <span class="slider"></span>
+            <span class="toggle-label">Limit how many zones a row spreads over</span>
+          </label>
+          <div class="criterion-body two-col" data-for="crit-zonesused">
+            <label>Min zones used <input type="number" id="crit-zonesused-min" min="1" max="5" value="1" /></label>
+            <label>Max zones used <input type="number" id="crit-zonesused-max" min="1" max="5" value="3" /></label>
+          </div>
+          <div class="criterion-body" data-for="crit-zonesused">
+            <div class="zones-demo" id="zones-demo" aria-hidden="true"></div>
+            <p class="mini-hint" id="zones-hint">Zones are blocks of ten. A row that touches only 2–3 zones is more clustered; touching every zone is more spread out.</p>
+          </div>
+        </div>
+
+        <div class="criterion">
+          <label class="toggle">
+            <input type="checkbox" id="crit-parity" checked />
+            <span class="slider"></span>
+            <span class="toggle-label">Limit odd/even streaks</span>
+          </label>
+          <div class="criterion-body" data-for="crit-parity">
+            <label>Longest allowed run of only-odd or only-even numbers
+              <input type="number" id="crit-parity-value" min="1" max="10" value="3" />
             </label>
+            <p class="mini-hint">E.g. 3: a row like 3, 7, 11, 19, … (four odd numbers in a row) is rejected.</p>
+          </div>
+        </div>
+        </div>
+      </details>
+
+      <details class="panel collapsible" data-panel="antipatterns">
+        <summary>
+          <h2><span class="panel-icon" aria-hidden="true">🛡️</span> Popular anti-patterns</h2>
+          <span class="panel-count" data-count-for="antipatterns"></span>
+          <span class="chevron" aria-hidden="true"></span>
+        </summary>
+        <div class="panel-body">
+        <p class="panel-hint">Avoid the “obvious” combinations a lot of players pick — so a win is less likely to be shared.</p>
+
+        <div class="criterion">
+          <label class="toggle">
+            <input type="checkbox" id="crit-arith" checked />
+            <span class="slider"></span>
+            <span class="toggle-label">Max arithmetic progression length</span>
+          </label>
+          <div class="criterion-body" data-for="crit-arith">
+            <label>Longest allowed equal-gap run (even non-adjacent)
+              <input type="number" id="crit-arith-value" min="2" max="10" value="3" />
+            </label>
+            <p class="mini-hint">E.g. 3 rejects 5, 10, 15, 20 — four numbers spaced evenly apart, anywhere in the row.</p>
+          </div>
+        </div>
+
+        <div class="criterion">
+          <label class="toggle">
+            <input type="checkbox" id="ap-lastdigit" checked />
+            <span class="slider"></span>
+            <span class="toggle-label">Limit same last digit</span>
+          </label>
+          <div class="criterion-body" data-for="ap-lastdigit">
+            <label>Max numbers ending in the same digit
+              <input type="number" id="ap-lastdigit-max" min="1" max="10" value="3" />
+            </label>
+            <p class="mini-hint">E.g. 3 rejects 4 numbers like 7, 17, 27, 37.</p>
+          </div>
+        </div>
+
+        <div class="criterion">
+          <label class="toggle">
+            <input type="checkbox" id="ap-multiple" checked />
+            <span class="slider"></span>
+            <span class="toggle-label">Limit multiples of one number</span>
+          </label>
+          <div class="criterion-body" data-for="ap-multiple">
+            <label>Max multiples of the same number (3, 5 or 7)
+              <input type="number" id="ap-multiple-max" min="1" max="10" value="4" />
+            </label>
+            <p class="mini-hint">E.g. 4 rejects 5 multiples of 7 like 7, 14, 21, 28, 35.</p>
+          </div>
+        </div>
+
+        <div class="criterion">
+          <label class="toggle">
+            <input type="checkbox" id="ap-lowhigh" />
+            <span class="slider"></span>
+            <span class="toggle-label">Low / high balance</span>
+          </label>
+          <div class="criterion-body two-col" data-for="ap-lowhigh">
+            <label>Min low half <input type="number" id="ap-lowhigh-low" min="0" value="1" /></label>
+            <label>Min high half <input type="number" id="ap-lowhigh-high" min="0" value="1" /></label>
+          </div>
+          <div class="criterion-body" data-for="ap-lowhigh">
+            <p class="mini-hint">Avoid all-low or all-high rows by requiring numbers from both halves of the range.</p>
           </div>
         </div>
 
@@ -95,9 +245,88 @@
             <span class="toggle-label">Avoid birthday bias</span>
           </label>
           <div class="criterion-body" data-for="crit-birthday">
-            <p class="mini-hint">Require at least one number above 31, since many players stick to dates — fewer co-winners if you win.</p>
+            <p class="mini-hint">Require at least one number above 31, since many players stick to calendar dates — fewer co-winners if you win.</p>
           </div>
         </div>
+        </div>
+      </details>
+
+      <details class="panel collapsible" data-panel="weighting">
+        <summary>
+          <h2><span class="panel-icon" aria-hidden="true">✨</span> Smart weighting</h2>
+          <span class="panel-count" data-count-for="weighting"></span>
+          <span class="chevron" aria-hidden="true"></span>
+        </summary>
+        <div class="panel-body">
+        <p class="panel-hint">Bias the random picks toward certain numbers. Needs loaded history.</p>
+
+        <div class="criterion">
+          <label class="toggle">
+            <input type="checkbox" id="bias-overdue" />
+            <span class="slider"></span>
+            <span class="toggle-label">Favour overdue numbers</span>
+          </label>
+          <div class="criterion-body" data-for="bias-overdue">
+            <label>Boost for numbers not picked lately
+              <span class="range-row">
+                <input type="range" id="bias-overdue-strength" min="0" max="100" value="50" />
+                <output id="bias-overdue-out">50&nbsp;%</output>
+              </span>
+            </label>
+            <p class="mini-hint">The longer a number has gone without being drawn (within your lookback window), the higher its chance of being suggested. Purely a style preference — the real odds never change.</p>
+          </div>
+        </div>
+
+        <div class="criterion">
+          <label class="toggle">
+            <input type="checkbox" id="bias-cold" />
+            <span class="slider"></span>
+            <span class="toggle-label">Favour rarely-picked numbers</span>
+          </label>
+          <div class="criterion-body" data-for="bias-cold">
+            <label>Boost for the least-drawn numbers
+              <span class="range-row">
+                <input type="range" id="bias-cold-strength" min="0" max="100" value="50" />
+                <output id="bias-cold-out">50&nbsp;%</output>
+              </span>
+            </label>
+            <label>Count how often each number was drawn within the last (years)
+              <input type="number" id="bias-cold-years" min="1" max="50" value="2" />
+            </label>
+            <p class="mini-hint">Numbers drawn least often in the chosen period get a higher chance of being suggested.</p>
+          </div>
+        </div>
+
+        <div class="criterion">
+          <label class="toggle">
+            <input type="checkbox" id="bias-half" />
+            <span class="slider"></span>
+            <span class="toggle-label">Favour lower or higher half</span>
+          </label>
+          <div class="criterion-body" data-for="bias-half">
+            <label>Lean of the numbers
+              <span class="range-row half-range">
+                <span class="half-end">Lower</span>
+                <input type="range" id="bias-half-value" min="-100" max="100" step="5" value="0" aria-label="Favour lower half (left) or higher half (right)" />
+                <span class="half-end">Higher</span>
+              </span>
+              <output id="bias-half-out" class="half-out">Neutral</output>
+            </label>
+            <p class="mini-hint" id="bias-half-preview"></p>
+            <p class="mini-hint">Drag left to make numbers from the lower half of the range more likely, right for the higher half. It only changes how likely each row is — every row stays possible and the odds of any row do not change.</p>
+          </div>
+        </div>
+        </div>
+      </details>
+
+      <details class="panel collapsible" data-panel="yours">
+        <summary>
+          <h2><span class="panel-icon" aria-hidden="true">🎯</span> Your numbers</h2>
+          <span class="panel-count" data-count-for="yours"></span>
+          <span class="chevron" aria-hidden="true"></span>
+        </summary>
+        <div class="panel-body">
+        <p class="panel-hint">Personalise the rows and keep them distinct.</p>
 
         <div class="criterion">
           <label class="toggle">
@@ -137,21 +366,34 @@
             </label>
           </div>
         </div>
-      </section>
+        </div>
+      </details>
 
-      <section class="panel">
-        <h2><span class="panel-icon">🕘</span> Historical draws</h2>
+      <details class="panel collapsible" data-panel="history">
+        <summary>
+          <h2><span class="panel-icon" aria-hidden="true">🕘</span> Historical draws</h2>
+          <span class="panel-count" data-count-for="history"></span>
+          <span class="chevron" aria-hidden="true"></span>
+        </summary>
+        <div class="panel-body">
         <p class="panel-hint">Load previous winning numbers and avoid repeating history.</p>
 
         <div class="history-load">
-          <label>Source page / API URL
-            <div class="url-row">
-              <input type="text" id="history-url" placeholder="https://…" />
-              <button id="history-fetch" class="btn small">Fetch</button>
-            </div>
+          <div class="btn-row" style="margin-bottom: 0.8rem;">
+            <button id="history-crawl" class="btn small primary">⤓ Fetch results</button>
+            <button id="history-download" class="btn small">Download dataset CSV</button>
+          </div>
+          <label class="toggle auto-update">
+            <input type="checkbox" id="auto-update" checked />
+            <span class="slider"></span>
+            <span class="toggle-label">Check for newer results when the app opens</span>
           </label>
-          <div id="history-presets" class="preset-links"></div>
-          <p class="mini-hint">Lottery sites often block direct fetching from a browser app (CORS). If fetching fails, open the results page yourself, copy the draws, and paste them below — or import a downloaded CSV/JSON file.</p>
+          <progress id="crawl-progress" class="crawl-progress" hidden aria-label="Fetching results"></progress>
+          <p class="mini-hint" style="margin: 0 0 0.7rem;">Fetches draws for your lookback window and falls back automatically: Norsk Tipping's results API → the dataset shipped with the app → an independent public dataset → the legacy API. Later sources are only asked for weeks still missing. Every draw remembers its source, and the <a href="#coverage-card">data basis panel</a> shows which years and weeks were fetched and which are used.</p>
+          <div id="source-status-wrap" class="source-status-wrap" hidden>
+            <p class="mini-hint" style="margin: 0 0 0.3rem;"><strong>Source chain, last fetch:</strong></p>
+            <ul id="source-status" class="source-status" aria-live="polite"></ul>
+          </div>
 
           <label>Paste draws (one per line, e.g. <code>16.03.2024 1 5 12 19 23 28 31</code>)
             <textarea id="history-paste" rows="3" placeholder="date  n1 n2 n3 …"></textarea>
@@ -164,7 +406,8 @@
           </div>
         </div>
 
-        <div id="history-status" class="history-status">No draws loaded.</div>
+        <div id="history-status" class="history-status" role="status">No draws loaded.</div>
+        <p class="provenance" id="history-provenance" hidden></p>
 
         <div class="criterion">
           <label class="toggle">
@@ -200,59 +443,296 @@
             <p class="mini-hint">E.g. 4: if numbers 3, 9, 17 and 25 ever appeared together in a past draw, no generated row may contain all four.</p>
           </div>
         </div>
-      </section>
+        </div>
+      </details>
 
-      <section class="panel" id="stats-panel" hidden>
-        <h2><span class="panel-icon">📊</span> Number statistics</h2>
+      <section class="panel" id="stats-panel" aria-labelledby="stats-title" hidden>
+        <h2 id="stats-title"><span class="panel-icon" aria-hidden="true">📊</span> Number statistics</h2>
         <p class="panel-hint" id="stats-hint"></p>
-        <div id="freq-chart" class="freq-chart"></div>
+        <p class="provenance" id="stats-provenance"></p>
+        <div id="freq-chart" class="freq-chart" role="img"></div>
+        <table class="sr-only" id="freq-table">
+          <caption>Main-number frequency in the active window</caption>
+          <thead><tr><th scope="col">Number</th><th scope="col">Times drawn</th><th scope="col">Draws since last seen</th></tr></thead>
+          <tbody></tbody>
+        </table>
         <div class="hotcold">
           <div><strong>Hot:</strong> <span id="hot-numbers"></span></div>
           <div><strong>Cold:</strong> <span id="cold-numbers"></span></div>
+          <div><strong>Overdue:</strong> <span id="overdue-numbers"></span></div>
+        </div>
+        <div class="btn-row stat-actions">
+          <button type="button" class="btn small" id="act-overdue">Favour overdue</button>
+          <button type="button" class="btn small" id="act-cold">Favour rarely-picked</button>
+          <button type="button" class="btn small" id="act-exclude-hot">Exclude 5 hottest</button>
         </div>
       </section>
 
     </aside>
 
     <!-- ============ MAIN: generated tickets ============ -->
-    <section class="content">
+    <section class="content" aria-label="Your rows">
+      <section class="restrict" id="restrict-banner" data-level="ok" aria-labelledby="rb-title" aria-live="polite">
+        <div class="rb-head">
+          <span class="rb-icon" id="rb-icon" aria-hidden="true">✓</span>
+          <div class="rb-text"><strong id="rb-title">Checking your rules…</strong><span id="rb-sub"></span></div>
+        </div>
+        <div id="rb-items" class="rb-items"></div>
+      </section>
+
+      <section class="space-card" id="space-card" aria-labelledby="space-title">
+        <h2 id="space-title" class="sr-only">Possible rows and how many fit your rules</h2>
+        <div class="space-grid">
+          <div class="space-col">
+            <span class="space-label">All possible rows</span>
+            <strong id="space-total" class="space-num">—</strong>
+            <span class="space-sub" id="space-total-sub">no rules applied</span>
+          </div>
+          <div class="space-col space-col-rules">
+            <span class="space-label">Rows that fit your rules</span>
+            <strong id="space-count" class="space-num">—</strong>
+            <span class="space-sub" id="space-count-sub"></span>
+          </div>
+          <div class="space-col">
+            <span class="space-label">Share of all possibilities</span>
+            <strong id="space-pct" class="space-num">—</strong>
+            <span class="space-sub" id="space-pct-sub"></span>
+          </div>
+        </div>
+        <div class="space-bar" aria-hidden="true"><div class="space-bar-fill" id="space-bar-fill"></div></div>
+        <p class="space-note" id="space-note"></p>
+        <p class="space-link"><button type="button" class="linkbtn" id="space-to-dashboard">See the full breakdown in the Dashboard →</button></p>
+      </section>
+
       <div class="content-header">
         <div>
-          <h2 id="content-title">Your 10 rows — Norsk Lotto</h2>
+          <h2 id="content-title">Your rows — Norsk Lotto</h2>
           <p id="content-sub" class="panel-hint">7 numbers from 1–34 · draw every Saturday</p>
         </div>
-        <div class="btn-row">
-          <button id="btn-generate" class="btn primary">⟳ Generate 10 rows</button>
-          <button id="btn-copy" class="btn" disabled>Copy</button>
-          <button id="btn-csv" class="btn" disabled>Download CSV</button>
-          <button id="btn-print" class="btn" disabled>Print</button>
+        <div class="generate-bar">
+          <label class="rowcount" for="row-count">Rows
+            <input type="number" id="row-count" min="1" max="50" value="10" inputmode="numeric" />
+          </label>
+          <button id="btn-generate" class="btn primary btn-lg">⟳ Generate 10 rows</button>
+        </div>
+      </div>
+      <div class="export-row btn-row">
+        <button id="btn-copy" class="btn small" disabled>Copy all</button>
+        <button id="btn-csv" class="btn small" disabled>Download CSV</button>
+        <button id="btn-print" class="btn small" disabled>Print</button>
+      </div>
+
+      <div id="fetch-banner" class="fetch-banner" role="status" aria-live="polite" hidden>
+        <div class="fetch-banner-row">
+          <span class="fetch-banner-icon" aria-hidden="true">⤓</span>
+          <div class="fetch-banner-text">
+            <strong id="fetch-banner-title"></strong>
+            <span id="fetch-banner-detail"></span>
+          </div>
+          <div class="btn-row">
+            <button type="button" id="fetch-banner-details" class="btn small ghost" hidden>Details</button>
+            <button type="button" id="fetch-banner-close" class="btn small ghost" aria-label="Dismiss" hidden>✕</button>
+          </div>
+        </div>
+        <progress id="fetch-banner-progress" class="crawl-progress" hidden aria-label="Fetching results"></progress>
+        <ul id="fetch-banner-sources" class="source-status compact" hidden></ul>
+      </div>
+
+      <div id="freshness-banner" class="freshness" hidden>
+        <span class="freshness-icon" aria-hidden="true">⚠</span>
+        <span id="freshness-text"></span>
+        <button type="button" id="freshness-fetch" class="btn small primary">⤓ Fetch newer results</button>
+      </div>
+
+      <section class="lastdraw-card" id="lastdraw-card">
+        <div class="lastdraw-top">
+          <div class="lastdraw-title">
+            <span class="lastdraw-star" aria-hidden="true">★</span>
+            <div>
+              <h2>Last draw</h2>
+              <p class="lastdraw-meta" id="lastdraw-meta">No last draw set.</p>
+            </div>
+          </div>
+          <button id="lastdraw-edit" class="btn small ghost">Edit</button>
+        </div>
+
+        <div id="lastdraw-balls" class="lastdraw-balls"></div>
+
+        <div id="lastdraw-editor" class="lastdraw-editor" hidden>
+          <div class="editor-tabs" role="tablist">
+            <button type="button" class="editor-tab active" id="lastdraw-tab-history" data-mode="history" role="tab">From loaded results (by date)</button>
+            <button type="button" class="editor-tab" id="lastdraw-tab-manual" data-mode="manual" role="tab">Enter manually</button>
+          </div>
+
+          <div class="editor-pane" id="lastdraw-pane-history">
+            <label for="lastdraw-date">Choose a draw date from your loaded results</label>
+            <select id="lastdraw-date"></select>
+            <p class="mini-hint" id="lastdraw-date-hint"></p>
+          </div>
+
+          <div class="editor-pane" id="lastdraw-pane-manual" hidden>
+            <label for="lastdraw-input">Enter the winning numbers</label>
+            <input type="text" id="lastdraw-input" placeholder="e.g. 3 9 17 21 25 28 31" />
+            <p class="mini-hint" id="lastdraw-manual-hint"></p>
+          </div>
+
+          <div class="btn-row">
+            <button id="lastdraw-save" class="btn small primary">Use these numbers</button>
+            <button id="lastdraw-cancel" class="btn small ghost">Cancel</button>
+            <button id="lastdraw-reset" class="btn small">Reset to newest result</button>
+          </div>
+        </div>
+
+        <div class="reuse-control">
+          <label class="toggle">
+            <input type="checkbox" id="reuse-enabled" />
+            <span class="slider"></span>
+            <span class="toggle-label">Reuse numbers from the last draw</span>
+          </label>
+          <div class="reuse-body" id="reuse-body">
+            <div class="dual-range" id="reuse-range">
+              <div class="dual-track"><div class="dual-fill" id="reuse-fill"></div></div>
+              <input type="range" id="reuse-min" min="0" max="7" value="0" aria-label="Minimum numbers to reuse" />
+              <input type="range" id="reuse-max" min="0" max="7" value="2" aria-label="Maximum numbers to reuse" />
+            </div>
+            <p class="reuse-summary" id="reuse-summary">Carry over <strong>0–2</strong> of these numbers into each generated row.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel coverage-card" id="coverage-card" aria-labelledby="coverage-title" hidden>
+        <div class="coverage-head">
+          <h2 id="coverage-title"><span class="panel-icon" aria-hidden="true">📅</span> Data basis for your rows</h2>
+          <button type="button" id="coverage-fetch" class="btn small">⤓ Fetch missing</button>
+        </div>
+        <div id="coverage-summary" class="coverage-summary"></div>
+        <div class="cov-legend" aria-hidden="true">
+          <span><i class="cov-cell cov-complete cov-used"></i> used for your rows</span>
+          <span><i class="cov-cell cov-complete"></i> fetched, outside lookback</span>
+          <span><i class="cov-cell cov-partial"></i> partial week</span>
+          <span><i class="cov-cell cov-missing"></i> missing</span>
+          <span><i class="cov-cell cov-future"></i> future / before launch</span>
+        </div>
+        <div id="coverage-grid" class="coverage-grid"></div>
+        <p id="coverage-missing" class="coverage-missing mini-hint" hidden></p>
+      </section>
+
+      <div id="summary-bar" class="summary-bar" hidden>
+        <div class="summary-stats" id="summary-stats"></div>
+        <div class="summary-cost">
+          <span id="summary-cost"></span>
+          <label class="price-input" for="row-price">kr / row
+            <input type="number" id="row-price" min="0" step="0.5" value="6" inputmode="decimal" />
+          </label>
         </div>
       </div>
 
       <div id="warnings" class="warnings" hidden></div>
 
-      <div id="tickets" class="tickets">
-        <div class="empty-state">
-          <div class="empty-balls" aria-hidden="true">
-            <span class="ball demo">7</span><span class="ball demo">12</span><span class="ball demo">23</span><span class="ball demo">31</span>
-          </div>
-          <p>Press <strong>Generate 10 rows</strong> to pick your numbers.</p>
-        </div>
-      </div>
+      <section id="diagnosis" class="diagnosis" aria-labelledby="diag-title" hidden>
+        <h3 id="diag-title"></h3>
+        <p class="diag-sum" id="diag-sum"></p>
+        <div id="diag-rules" class="diag-rules"></div>
+        <p class="diag-foot">“Rejects” is the share of candidate rows (built the way the generator builds them) that this rule alone throws away; “only this rule” is the share thrown away by this rule and nothing else. Hard rules are never relaxed; style rules are relaxed automatically when they cannot be met.</p>
+      </section>
+
+      <div id="tickets" class="tickets"></div>
+      <div id="sr-announcer" class="sr-only" aria-live="polite" aria-atomic="true"></div>
 
       <footer class="disclaimer">
-        Every valid row has exactly the same odds of winning — these filters shape the <em>style</em> of your rows
-        and avoid repeating history, but cannot improve your chances. Play responsibly (18+).
-        LykkeTall is not affiliated with Norsk Tipping or Eurojackpot.
+        <p class="responsible">
+          <strong>Spill ansvarlig — play responsibly (18+).</strong>
+          Set a budget before you play. If gambling stops being fun, free and anonymous help is available from
+          <a href="https://hjelpelinjen.no" target="_blank" rel="noopener">Hjelpelinjen</a>
+          on <a href="tel:80080040">800 800 40</a>.
+        </p>
+        <p class="build">Build <span id="build-id">dev</span></p>
+        <p>
+          Every valid row has exactly the same odds of winning — these filters shape the <em>style</em> of your rows
+          and avoid repeating history, but cannot improve your chances.
+          LykkeTall is not affiliated with Norsk Tipping or Eurojackpot.
+        </p>
       </footer>
     </section>
 
   </main>
 
-  <script src="js/lotteries.js"></script>
-  <script src="js/util.js"></script>
-  <script src="js/history.js"></script>
-  <script src="js/generator.js"></script>
-  <script src="js/app.js"></script>
+  <!-- ============ DASHBOARD VIEW (separate from the picker) ============ -->
+  <main class="dash" id="dashboard-view" role="tabpanel" aria-labelledby="tab-dashboard" hidden>
+    <div class="dash-head">
+      <div>
+        <h2 id="dash-title">Dashboard</h2>
+        <p class="panel-hint" id="dash-sub">How your settings shape the possible rows — and what that does (and does not) mean for your chances.</p>
+      </div>
+      <div class="btn-row">
+        <button type="button" class="btn small" id="dash-refresh">↻ Recalculate</button>
+        <button type="button" class="btn small primary" id="dash-to-picker">← Back to picker</button>
+      </div>
+    </div>
+    <div id="dash-busy" class="dash-busy" role="status" aria-live="polite" hidden>Calculating…</div>
+
+    <section class="dash-hero" aria-label="Summary">
+      <div class="dash-ring-card">
+        <div class="dash-ring" id="dash-ring" role="img" aria-label="Share of possible rows that fit your rules"></div>
+        <div class="dash-ring-caption" id="dash-ring-caption"></div>
+      </div>
+      <div class="dash-kpis">
+        <div class="kpi"><span class="kpi-label">All possible rows</span><strong id="kpi-total">—</strong><span class="kpi-sub" id="kpi-total-sub"></span></div>
+        <div class="kpi kpi-accent"><span class="kpi-label">Rows that fit your rules</span><strong id="kpi-fit">—</strong><span class="kpi-sub" id="kpi-fit-sub"></span></div>
+        <div class="kpi"><span class="kpi-label">Ruled out</span><strong id="kpi-out">—</strong><span class="kpi-sub" id="kpi-out-sub"></span></div>
+        <div class="kpi"><span class="kpi-label">Odds per row</span><strong id="kpi-odds">—</strong><span class="kpi-sub">the same with or without rules</span></div>
+      </div>
+    </section>
+
+    <section class="dash-card" aria-labelledby="funnel-title">
+      <h3 id="funnel-title">From all rows to your rows</h3>
+      <p class="dash-hint">Each rule in turn: the bar is how many rows are still possible after it (cumulative). “Alone” is what that rule would keep by itself.</p>
+      <div id="funnel" class="funnel"></div>
+    </section>
+
+    <div class="dash-two">
+      <section class="dash-card" aria-labelledby="proof-title">
+        <h3 id="proof-title">What it means for your chances</h3>
+        <p class="dash-hint" id="proof-hint"></p>
+        <div class="proof" id="proof"></div>
+      </section>
+      <section class="dash-card" aria-labelledby="data-title">
+        <h3 id="data-title">Data and setup</h3>
+        <div id="dash-data" class="dash-data"></div>
+      </section>
+    </div>
+
+    <section class="dash-card" aria-labelledby="rules-title">
+      <h3 id="rules-title">All settings at a glance</h3>
+      <p class="dash-hint">Every rule with its current setting, how much of the field it keeps on its own, and how many of your loaded past draws it would have filtered out. Click a card to change it in the picker.</p>
+      <p class="dash-backtest" id="dash-backtest"></p>
+      <div id="dash-rules" class="rule-grid"></div>
+    </section>
+
+    <section class="dash-card" aria-labelledby="board-title">
+      <h3 id="board-title">Number board</h3>
+      <p class="dash-hint">How often each number was drawn in your lookback window, with your required, excluded and last-draw numbers marked.</p>
+      <div id="board" class="board"></div>
+      <div class="board-legend" aria-hidden="true">
+        <span><i class="tile t-last">★</i> last draw</span>
+        <span><i class="tile t-req"></i> required</span>
+        <span><i class="tile t-exc"></i> excluded</span>
+        <span><i class="tile t-hot"></i> drawn more often</span>
+        <span><i class="tile t-cold"></i> drawn less often</span>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden>
+    <span id="toast-text"></span>
+    <button type="button" id="toast-action" class="btn small" hidden></button>
+  </div>
+
+  <script src="js/lotteries.js?v=296196c0"></script>
+  <script src="js/util.js?v=c24053fd"></script>
+  <script src="js/history.js?v=dff7aecd"></script>
+  <script src="js/crawler.js?v=320e4439"></script>
+  <script src="js/generator.js?v=1393219f"></script>
+  <script src="js/app.js?v=71f5db11"></script>
 </body>
 </html>
