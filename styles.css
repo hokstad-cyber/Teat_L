@@ -1286,3 +1286,17 @@ details[open] > summary .chevron { transform: rotate(-135deg); margin-bottom: -0
 .rb-item .rb-name .sev-heavy { color: var(--danger); }
 .rb-item .rb-name .sev-moderate { color: var(--gold); }
 .rb-item .rb-name .sev-light { color: var(--ok); }
+
+
+/* ============ Half-range slider & best-guess notes ============ */
+
+.chip-wide { grid-column: 1 / -1; }
+.half-range { align-items: center; }
+.half-range input[type="range"] { flex: 1; }
+.half-end { font-size: 0.72rem; font-weight: 700; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.04em; }
+.half-out { display: block; margin-top: 0.25rem; text-align: center; font-weight: 800; font-size: 0.85rem; color: var(--text); }
+.preset-notes { margin: 0.6rem 0 0; padding: 0.6rem 0.8rem 0.6rem 1.6rem; border-radius: var(--radius-sm); background: rgba(0,0,0,0.22); border: 1px solid var(--panel-edge); font-size: 0.76rem; line-height: 1.5; color: var(--text-dim); }
+.preset-notes[hidden] { display: none; }
+.preset-notes li { margin: 0.1rem 0; }
+.preset-notes .pn-head { list-style: none; margin-left: -1rem; color: var(--text); font-weight: 700; }
+.preset-notes .pn-foot { list-style: none; margin-left: -1rem; margin-top: 0.4rem; font-style: italic; }

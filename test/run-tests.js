@@ -34,7 +34,7 @@ const {
   drawsSinceLastSeen, softRuleFailures, estimatePassRate,
   isoWeekOf, isoWeekStart, isoWeeksInYear, coverageByWeek, parseNorskTippingV2, parseHeaderCsv,
   mergeDrawsByDate, windowsNewestFirst, expectedDrawsInWeek, isoDateKey, drawsExpectedBetween,
-  estimateSpace, jackpotCombinations, binomial, ruleBreakdown, ruleCatalog, historicalImpact, diagnoseRejections, ruleStrictness, overlapAcceptance
+  estimateSpace, jackpotCombinations, binomial, ruleBreakdown, ruleCatalog, historicalImpact, diagnoseRejections, ruleStrictness, overlapAcceptance, halfWeights, expectedLowCount, deriveBestGuess, smallestCovering
 } = vm.runInContext(
   `({ LOTTERIES, sampleDistinct, combinationKeys, longestConsecutiveRun, sumOf, countOdd,
       overlapCount, parseDrawsText, parseDraws, filterDrawsByYears, buildHistoryIndex,
@@ -43,7 +43,7 @@ const {
       drawsSinceLastSeen, softRuleFailures, estimatePassRate,
       isoWeekOf, isoWeekStart, isoWeeksInYear, coverageByWeek, parseNorskTippingV2, parseHeaderCsv,
       mergeDrawsByDate, windowsNewestFirst, expectedDrawsInWeek, isoDateKey, drawsExpectedBetween,
-      estimateSpace, jackpotCombinations, binomial, ruleBreakdown, ruleCatalog, historicalImpact, diagnoseRejections, ruleStrictness, overlapAcceptance })`,
+      estimateSpace, jackpotCombinations, binomial, ruleBreakdown, ruleCatalog, historicalImpact, diagnoseRejections, ruleStrictness, overlapAcceptance, halfWeights, expectedLowCount, deriveBestGuess, smallestCovering })`,
   context
 );
 
@@ -694,6 +694,54 @@ for (const cfg of [lotto, euro]) {
   assert(o0.last < 1e-6, "overlap: 10 rows with no shared numbers is practically impossible (" + o0.last + ")");
   assert(Math.abs(overlapAcceptance(lotto, 7, 10).last - 1) < 1e-12, "overlap: allowing 7 shared never restricts");
   assert(overlapAcceptance(lotto, 4, 10).last > 0.9, "overlap: default ≤4 hardly restricts");
+}
+
+/* ---- lower / higher half weighting ---- */
+{
+  assert(halfWeights(lotto, 0) === null, "half: neutral gives no weights");
+  const lo = halfWeights(lotto, -100);
+  assert(lo[1] === 9 && lo[17] === 9 && lo[18] === 1 && lo[34] === 1, "half: -100 boosts 1–17 by 9x");
+  const hi = halfWeights(lotto, 50);
+  assert(hi[18] === 5 && hi[17] === 1, "half: +50 boosts the higher half by 5x");
+  const neutral = expectedLowCount(lotto, null, 4000);
+  const favLow = expectedLowCount(lotto, lo, 4000);
+  const favHigh = expectedLowCount(lotto, halfWeights(lotto, 100), 4000);
+  assert(Math.abs(neutral - 3.5) < 0.15, "half: neutral averages 3.5 lower-half numbers (" + neutral.toFixed(2) + ")");
+  assert(favLow > 5.3 && favHigh < 1.7, `half: sliders move the average (${favLow.toFixed(2)} low / ${favHigh.toFixed(2)} high)`);
+  const mid = expectedLowCount(lotto, halfWeights(lotto, -30), 4000);
+  assert(mid > neutral + 0.4 && mid < favLow, "half: a smaller slider value gives a smaller lean (" + mid.toFixed(2) + ")");
+}
+
+/* ---- best guess from past draws ---- */
+{
+  assert(deriveBestGuess(lotto, [], 0.95) === null, "bestGuess: too few draws → null");
+  // Deterministic, balanced history: alternating draws with known properties
+  const base = [];
+  for (let i = 0; i < 120; i++) {
+    const shift = i % 10;
+    const m = [2, 7, 12, 17, 22, 27, 32].map((n) => ((n + shift * 3) % 34) + 1);
+    base.push({ date: new Date(2020, 0, 1 + i * 7), mains: [...new Set(m)].sort((a, b) => a - b).slice(0, 7), stars: [] });
+  }
+  const g = deriveBestGuess(lotto, base, 0.95);
+  assert(g && g.n === 120 && g.settings["crit-maxrun"] === true, "bestGuess: derives settings from 120 draws");
+  const covered = (id, test) => base.filter(test).length / base.length;
+  const sumsOk = covered("sum", (d) => { const s = d.mains.reduce((a, b) => a + b, 0); return s >= g.settings["crit-sum-min"] && s <= g.settings["crit-sum-max"]; });
+  assert(sumsOk >= 0.94, "bestGuess: the sum range lets ≥ 95 % of past draws through (" + sumsOk + ")");
+  const runOk = covered("run", (d) => longestConsecutiveRun(d.mains) <= g.settings["crit-maxrun-value"]);
+  assert(runOk >= 0.95, "bestGuess: max run covers the past draws (" + runOk + ")");
+  const oddOk = covered("odd", (d) => { const o = countOdd(d.mains); return o >= g.settings["crit-oddeven-min"] && o <= g.settings["crit-oddeven-max"]; });
+  assert(oddOk >= 0.9, "bestGuess: odd range covers the past draws (" + oddOk + ")");
+  assert(g.settings["bias-half"] === false && g.settings["hist-subset"] === false && g.settings["bias-overdue"] === false, "bestGuess: no lean, no overdue/cold weighting, no subset rule");
+  assert(g.notes.length >= 6 && g.notes.every((n) => typeof n === "string"), "bestGuess: explains what it set");
+  // A history that strongly favours high numbers → positive slider
+  const highDraws = [];
+  for (let i = 0; i < 100; i++) {
+    const m = [...new Set([1 + (i % 3), 18 + (i % 4), 22 + (i % 3), 26 + (i % 4), 30 + (i % 2), 32 + (i % 3), 34])].slice(0, 7);
+    while (m.length < 7) m.push(10 + m.length);
+    highDraws.push({ date: new Date(2020, 0, 1 + i * 7), mains: [...new Set(m)].sort((a, b) => a - b).slice(0, 7), stars: [] });
+  }
+  const gh = deriveBestGuess(lotto, highDraws, 0.95);
+  assert(gh.settings["bias-half"] === true && gh.settings["bias-half-value"] > 0, "bestGuess: draws leaning high → positive slider (" + gh.settings["bias-half-value"] + ")");
 }
 
 /* ---- windows ---- */

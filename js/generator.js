@@ -712,3 +712,39 @@ function overlapAcceptance(cfg, maxShared, rows) {
   const one = total ? ok / total : 1;
   return { one, last: Math.pow(one, Math.max(0, rows - 1)) };
 }
+
+/* ======================= Lower / higher half weighting ======================= */
+
+const HALF_MAX_BOOST = 8; // slider at ±100 % → favoured half is up to 9x as likely per number
+
+/**
+ * Weights favouring the lower or higher half of the number range.
+ * `value` is -100 … +100: negative favours the lower half, positive the
+ * higher half, 0 is neutral. Returns an array indexed 1..mainMax, or null
+ * when neutral.
+ */
+function halfWeights(cfg, value) {
+  if (!value) return null;
+  const half = Math.ceil(cfg.mainMax / 2);
+  const boost = 1 + (Math.abs(value) / 100) * HALF_MAX_BOOST;
+  const w = new Array(cfg.mainMax + 1).fill(1);
+  for (let n = 1; n <= cfg.mainMax; n++) {
+    const low = n <= half;
+    if ((value < 0 && low) || (value > 0 && !low)) w[n] = boost;
+  }
+  return w;
+}
+
+/** Average number of lower-half numbers per row under `weights` (simulated). */
+function expectedLowCount(cfg, weights, samples) {
+  const half = Math.ceil(cfg.mainMax / 2);
+  const pool = [];
+  for (let n = 1; n <= cfg.mainMax; n++) pool.push(n);
+  const n = samples || 2000;
+  let low = 0;
+  for (let i = 0; i < n; i++) {
+    const row = weights ? weightedSampleDistinct(pool, cfg.mainPick, (x) => weights[x] || 1) : sampleDistinct(pool, cfg.mainPick);
+    for (const x of row) if (x <= half) low++;
+  }
+  return low / n;
+}

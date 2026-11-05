@@ -559,3 +559,110 @@ function drawsExpectedBetween(cfg, after, until) {
   }
   return count;
 }
+
+/* ======================= Best guess from past draws ======================= */
+
+function quantile(sortedAsc, q) {
+  if (!sortedAsc.length) return 0;
+  const idx = Math.min(sortedAsc.length - 1, Math.max(0, Math.floor(q * sortedAsc.length)));
+  return sortedAsc[idx];
+}
+
+/** Smallest v so that at least `p` of the values are <= v. */
+function smallestCovering(values, p) {
+  const s = values.slice().sort((a, b) => a - b);
+  const need = Math.ceil(p * s.length);
+  return s[Math.max(0, need - 1)];
+}
+
+/**
+ * Derive rule and filter settings from how past draws actually looked, so
+ * that each rule on its own still lets `coverage` (default 95 %) of those
+ * draws through. Descriptive only: it says nothing about the next draw.
+ * Returns null if there are too few draws, else
+ * { n, coverage, settings: { elementId: value }, notes: [string] }.
+ */
+function deriveBestGuess(cfg, draws, coverage) {
+  const p = coverage || 0.95;
+  const usable = draws.filter((d) => d.mains && d.mains.length === cfg.mainPick);
+  if (usable.length < 40) return null;
+  const sorted = usable.slice().sort((a, b) => (a.date ? a.date.getTime() : 0) - (b.date ? b.date.getTime() : 0));
+  const tail = (1 - p) / 2;
+  const half = Math.ceil(cfg.mainMax / 2);
+  const zones = Math.ceil(cfg.mainMax / cfg.zoneSize);
+  const col = (fn) => sorted.map((d) => fn(d.mains));
+  const central = (vals) => {
+    const s = vals.slice().sort((a, b) => a - b);
+    return [quantile(s, tail), quantile(s, 1 - tail - 1e-9)];
+  };
+
+  const runs = col(longestConsecutiveRun);
+  const odds = col(countOdd);
+  const sums = col(sumOf);
+  const zoneMax = col((m) => { const c = new Array(zones).fill(0); for (const n of m) c[Math.floor((n - 1) / cfg.zoneSize)]++; return Math.max(...c); });
+  const parity = col(longestParityRun);
+  const arith = col(longestArithmeticProgression);
+  const lastDigit = col(maxSameLastDigit);
+  const mult = col((m) => maxSharedDivisor(m));
+  const lowCounts = col((m) => m.filter((n) => n <= half).length);
+  const highCounts = lowCounts.map((l) => cfg.mainPick - l);
+  const hasBig = col((m) => (m.some((n) => n > 31) ? 1 : 0));
+  const overlaps = [];
+  for (let i = 1; i < sorted.length; i++) overlaps.push(overlapCount(sorted[i - 1].mains, sorted[i].mains));
+
+  const [oddLo, oddHi] = central(odds);
+  const [sumLo, sumHi] = central(sums);
+  const [lowLo] = central(lowCounts);
+  const [highLo] = central(highCounts);
+  const [ovLo, ovHi] = central(overlaps);
+  const S = {};
+  const notes = [];
+  const pct = Math.round(p * 100);
+
+  S["crit-maxrun"] = true; S["crit-maxrun-value"] = Math.max(1, smallestCovering(runs, p));
+  notes.push(`Longest run of consecutive numbers: up to ${S["crit-maxrun-value"]}`);
+  S["crit-oddeven"] = true; S["crit-oddeven-min"] = oddLo; S["crit-oddeven-max"] = oddHi;
+  notes.push(`Odd numbers per draw: ${oddLo}–${oddHi}`);
+  S["crit-sum"] = true; S["crit-sum-min"] = sumLo; S["crit-sum-max"] = sumHi;
+  notes.push(`Sum of numbers: ${sumLo}–${sumHi}`);
+  S["crit-zone"] = true; S["crit-zone-max"] = Math.max(1, smallestCovering(zoneMax, p)); S["crit-zone-min"] = 0;
+  notes.push(`Most numbers in one zone of ten: ${S["crit-zone-max"]}`);
+  S["crit-parity"] = true; S["crit-parity-value"] = Math.max(1, smallestCovering(parity, p));
+  S["crit-arith"] = true; S["crit-arith-value"] = Math.max(2, smallestCovering(arith, p));
+  notes.push(`Equal-gap progression: up to ${S["crit-arith-value"]}`);
+  S["ap-lastdigit"] = true; S["ap-lastdigit-max"] = Math.max(1, smallestCovering(lastDigit, p));
+  S["ap-multiple"] = true; S["ap-multiple-max"] = Math.max(1, smallestCovering(mult, p));
+  if (lowLo >= 1 || highLo >= 1) {
+    S["ap-lowhigh"] = true; S["ap-lowhigh-low"] = lowLo; S["ap-lowhigh-high"] = highLo;
+    notes.push(`At least ${lowLo} from the lower and ${highLo} from the higher half`);
+  } else {
+    S["ap-lowhigh"] = false;
+  }
+  const bigShare = hasBig.reduce((a, b) => a + b, 0) / hasBig.length;
+  S["crit-birthday"] = bigShare >= p;
+  S["crit-overlap"] = true; S["crit-overlap-max"] = Math.min(cfg.mainPick - 1, 4);
+
+  // Reuse from the previous draw
+  S["reuse-enabled"] = true; S["reuse-min"] = ovLo; S["reuse-max"] = ovHi;
+  notes.push(`Numbers repeated from the previous draw: ${ovLo}–${ovHi}`);
+
+  // Lower/higher lean: is the mean low count significantly different from chance?
+  const mean = lowCounts.reduce((a, b) => a + b, 0) / lowCounts.length;
+  const expected = (cfg.mainPick * half) / cfg.mainMax;
+  const variance = lowCounts.reduce((a, b) => a + (b - mean) * (b - mean), 0) / Math.max(1, lowCounts.length - 1);
+  const z = (mean - expected) / Math.sqrt(variance / lowCounts.length || 1);
+  if (Math.abs(z) >= 2) {
+    const lean = Math.max(-100, Math.min(100, Math.round(((expected - mean) / expected) * 400 / 5) * 5));
+    S["bias-half"] = true; S["bias-half-value"] = lean;
+    notes.push(`Past draws lean ${lean < 0 ? "lower" : "higher"} (${mean.toFixed(2)} lower-half numbers per draw vs ${expected.toFixed(2)} expected) → slider ${lean > 0 ? "+" : ""}${lean}`);
+  } else {
+    S["bias-half"] = false; S["bias-half-value"] = 0;
+    notes.push(`No significant lean to the lower or higher half (${mean.toFixed(2)} vs ${expected.toFixed(2)} expected)`);
+  }
+
+  S["hist-exact"] = true;
+  S["hist-subset"] = false;
+  S["bias-overdue"] = false;
+  S["bias-cold"] = false;
+  return { n: sorted.length, coverage: p, settings: S, notes, coveragePct: pct };
+}

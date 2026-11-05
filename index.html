@@ -3,9 +3,9 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="build" content="7f508b3" />
+  <meta name="build" content="6067393" />
   <title>LykkeTall — Smart Lottery Number Picker</title>
-  <link rel="stylesheet" href="styles.css?v=aa2be0a0" />
+  <link rel="stylesheet" href="styles.css?v=cf89017b" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='45' fill='%23e8336d'/><text x='50' y='64' font-size='44' text-anchor='middle' fill='white' font-family='Arial'>7</text></svg>" />
 </head>
 <body data-lottery="lotto">
@@ -58,7 +58,9 @@
           <button type="button" class="chip" data-preset="contrarian" aria-pressed="false">Contrarian</button>
           <button type="button" class="chip" data-preset="weighted" aria-pressed="false">Overdue &amp; rare</button>
           <button type="button" class="chip" data-preset="random" aria-pressed="false">Pure random</button>
+          <button type="button" class="chip chip-wide" data-preset="history" aria-pressed="false" title="Sets the rules from how all your loaded past draws actually looked">✨ Best guess from history</button>
         </div>
+        <ul class="preset-notes" id="preset-notes" hidden></ul>
         <p class="preset-desc" id="preset-desc"></p>
 
         <div class="strictness" id="strictness">
@@ -276,6 +278,26 @@
               <input type="number" id="bias-cold-years" min="1" max="50" value="2" />
             </label>
             <p class="mini-hint">Numbers drawn least often in the chosen period get a higher chance of being suggested.</p>
+          </div>
+        </div>
+
+        <div class="criterion">
+          <label class="toggle">
+            <input type="checkbox" id="bias-half" />
+            <span class="slider"></span>
+            <span class="toggle-label">Favour lower or higher half</span>
+          </label>
+          <div class="criterion-body" data-for="bias-half">
+            <label>Lean of the numbers
+              <span class="range-row half-range">
+                <span class="half-end">Lower</span>
+                <input type="range" id="bias-half-value" min="-100" max="100" step="5" value="0" aria-label="Favour lower half (left) or higher half (right)" />
+                <span class="half-end">Higher</span>
+              </span>
+              <output id="bias-half-out" class="half-out">Neutral</output>
+            </label>
+            <p class="mini-hint" id="bias-half-preview"></p>
+            <p class="mini-hint">Drag left to make numbers from the lower half of the range more likely, right for the higher half. It only changes how likely each row is — every row stays possible and the odds of any row do not change.</p>
           </div>
         </div>
         </div>
@@ -692,9 +714,9 @@
 
   <script src="js/lotteries.js?v=296196c0"></script>
   <script src="js/util.js?v=c24053fd"></script>
-  <script src="js/history.js?v=6d050857"></script>
+  <script src="js/history.js?v=7253e98a"></script>
   <script src="js/crawler.js?v=320e4439"></script>
-  <script src="js/generator.js?v=24c5d2f2"></script>
-  <script src="js/app.js?v=1a021607"></script>
+  <script src="js/generator.js?v=a2654add"></script>
+  <script src="js/app.js?v=2154e28f"></script>
 </body>
 </html>

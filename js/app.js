@@ -151,6 +151,7 @@
     "crit-birthday",
     "bias-overdue", "bias-overdue-strength",
     "bias-cold", "bias-cold-strength", "bias-cold-years",
+    "bias-half", "bias-half-value",
     "crit-overlap", "crit-overlap-max",
     "crit-exclude", "crit-exclude-list",
     "crit-require", "crit-require-list",
@@ -1023,18 +1024,21 @@
   function computeBiasWeights(cfg) {
     const overdueOn = $("#bias-overdue").checked && intVal("bias-overdue-strength", 0) > 0;
     const coldOn = $("#bias-cold").checked && intVal("bias-cold-strength", 0) > 0;
-    if (!overdueOn && !coldOn) return { weights: null, warnings: [] };
+    const halfVal = $("#bias-half").checked ? intVal("bias-half-value", 0) : 0;
+    const halfW = halfWeights(cfg, halfVal);
+    if (!overdueOn && !coldOn) return { weights: halfW, warnings: [] };
 
     const all = state.history[state.lotteryId];
     if (!all.length) {
       return {
-        weights: null,
+        weights: halfW,
         warnings: ["The overdue/rarely-picked sliders are active, but no historical draws are loaded — they have no effect yet."]
       };
     }
 
     const warnings = [];
     const weights = new Array(cfg.mainMax + 1).fill(1);
+    if (halfW) for (let n = 1; n <= cfg.mainMax; n++) weights[n] *= halfW[n];
 
     if (overdueOn) {
       const gaps = drawsSinceLastSeen(activeDraws(), cfg);
@@ -1393,7 +1397,7 @@
         "ap-lastdigit": true, "ap-lastdigit-max": 3,
         "ap-multiple": true, "ap-multiple-max": 4,
         "ap-lowhigh": true, "ap-lowhigh-low": 1, "ap-lowhigh-high": 1,
-        "crit-birthday": false, "bias-overdue": false, "bias-cold": false,
+        "crit-birthday": false, "bias-overdue": false, "bias-cold": false, "bias-half": false,
         "crit-overlap": true, "crit-overlap-max": cfg.mainPick === 7 ? 4 : 3
       })
     },
@@ -1423,9 +1427,18 @@
       apply: () => ({
         "crit-maxrun": false, "crit-oddeven": false, "crit-sum": false, "crit-zone": false,
         "crit-parity": false, "crit-arith": false, "ap-lastdigit": false, "ap-multiple": false,
-        "ap-lowhigh": false, "crit-birthday": false, "bias-overdue": false, "bias-cold": false,
+        "ap-lowhigh": false, "crit-birthday": false, "bias-overdue": false, "bias-cold": false, "bias-half": false,
         "crit-overlap": false
       })
+    },
+    history: {
+      label: "Best guess",
+      desc: "Rules and filters set from how all your loaded past draws actually looked — each rule lets ~95 % of past draws through. Describes the past; it cannot predict the next draw.",
+      apply: (cfg) => {
+        const guess = deriveBestGuess(cfg, state.history[cfg.id], 0.95);
+        state.bestGuess = guess;
+        return guess ? guess.settings : null;
+      }
     }
   };
 
@@ -1433,6 +1446,13 @@
     const preset = PRESETS[id];
     if (!preset) return;
     const values = preset.apply(LOTTERIES[state.lotteryId]);
+    if (!values) {
+      if (quiet) return;
+      showToast(id === "history"
+        ? `Best guess needs at least 40 loaded past draws — you have ${state.history[state.lotteryId].length}. Fetch or import results first.`
+        : "Could not apply that preset.");
+      return;
+    }
     for (const [key, value] of Object.entries(values)) {
       const el = document.getElementById(key);
       if (!el) continue;
@@ -1440,6 +1460,7 @@
       else el.value = value;
     }
     state.preset = id;
+    if (id !== "history") state.bestGuess = null;
     syncCriterionBodies();
     syncBiasOutputs();
     renderPresetState();
@@ -1449,10 +1470,21 @@
     if (!quiet) showToast(`${preset.label} preset applied — generate to see it.`);
   }
 
+  function renderPresetNotes() {
+    const ul = $("#preset-notes");
+    const g = state.preset === "history" ? state.bestGuess : null;
+    if (!g) { ul.hidden = true; ul.innerHTML = ""; return; }
+    ul.hidden = false;
+    ul.innerHTML = `<li class="pn-head">Based on ${g.n} past draws (each rule keeps ~${g.coveragePct} % of them):</li>` +
+      g.notes.map((n) => `<li>${escapeHtml(n)}</li>`).join("") +
+      `<li class="pn-foot">Past draws are random: this matches how they looked, it does not make the next draw more predictable.</li>`;
+  }
+
   function renderPresetState() {
     for (const chip of document.querySelectorAll(".chip[data-preset]")) {
       chip.setAttribute("aria-pressed", chip.dataset.preset === state.preset ? "true" : "false");
     }
+    renderPresetNotes();
     const p = PRESETS[state.preset];
     $("#preset-desc").textContent = p
       ? p.desc
@@ -1993,6 +2025,7 @@
     if (f.newest) out.push(list("Newest draw", f.newest.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }) + (f.stale ? ` (${f.missingSince} newer not loaded)` : ""), f.stale));
     if (lc) out.push(list("Last fetch", new Date(lc.at).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" }) + (lc.missingWeeks ? ` · ${lc.missingWeeks} weeks missing` : ""), !!lc.missingWeeks));
     out.push(list("Favour overdue / rare", `${criteria ? (document.getElementById("bias-overdue").checked ? intVal("bias-overdue-strength", 0) + " %" : "off") : "—"} / ${document.getElementById("bias-cold").checked ? intVal("bias-cold-strength", 0) + " %" : "off"}`));
+    out.push(list("Favour lower / higher half", document.getElementById("bias-half").checked && intVal("bias-half-value", 0) !== 0 ? (intVal("bias-half-value", 0) < 0 ? `lower ${-intVal("bias-half-value", 0)} %` : `higher ${intVal("bias-half-value", 0)} %`) : "off"));
     out.push(list("Weighting changes", "which rows are likelier, not which are possible"));
     const ex = criteria.excludeNumbers.enabled ? criteria.excludeNumbers.numbers : [];
     const rq = criteria.requireNumbers.enabled ? criteria.requireNumbers.numbers : [];
@@ -2076,7 +2109,29 @@
     }
   }
 
+  function renderHalfOutputs() {
+    const v = intVal("bias-half-value", 0);
+    const out = $("#bias-half-out");
+    out.textContent = v === 0 ? "Neutral" : v < 0 ? `Favour lower half · ${Math.abs(v)} %` : `Favour higher half · ${v} %`;
+  }
+
+  /** Live preview of what the half slider does to a typical row. */
+  function renderHalfPreview() {
+    const el = $("#bias-half-preview");
+    if (!$("#bias-half").checked) { el.textContent = ""; return; }
+    const cfg = LOTTERIES[state.lotteryId];
+    const half = Math.ceil(cfg.mainMax / 2);
+    const v = intVal("bias-half-value", 0);
+    const neutral = (cfg.mainPick * half) / cfg.mainMax;
+    const avg = expectedLowCount(cfg, halfWeights(cfg, v), 1500);
+    el.innerHTML = v === 0
+      ? `Neutral: about <b>${neutral.toFixed(1)}</b> of ${cfg.mainPick} numbers come from the lower half (1–${half}).`
+      : `A typical row will have about <b>${avg.toFixed(1)}</b> of ${cfg.mainPick} numbers from the lower half (1–${half}) and <b>${(cfg.mainPick - avg).toFixed(1)}</b> from the higher half. Neutral would be ${neutral.toFixed(1)} / ${(cfg.mainPick - neutral).toFixed(1)}.`;
+  }
+
   function syncBiasOutputs() {
+    renderHalfOutputs();
+    renderHalfPreview();
     for (const [slider, out] of [["bias-overdue-strength", "bias-overdue-out"], ["bias-cold-strength", "bias-cold-out"]]) {
       document.getElementById(out).textContent = document.getElementById(slider).value + " %";
     }
@@ -2104,9 +2159,10 @@
     $("#switch-lotto").addEventListener("click", () => { switchLottery("lotto"); maybeAutoUpdate(); });
     $("#switch-eurojackpot").addEventListener("click", () => { switchLottery("eurojackpot"); maybeAutoUpdate(); });
 
-    for (const id of ["bias-overdue-strength", "bias-cold-strength"]) {
+    for (const id of ["bias-overdue-strength", "bias-cold-strength", "bias-half-value"]) {
       document.getElementById(id).addEventListener("input", syncBiasOutputs);
     }
+    $("#bias-half").addEventListener("change", renderHalfPreview);
     syncBiasOutputs();
 
     // Any edit to a rule makes the setup "custom" and refreshes the gauges.
